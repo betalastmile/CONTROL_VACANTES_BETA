@@ -154,6 +154,34 @@
             window.open(`https://wa.me/?text=${encodeURIComponent(armarMensajeReapertura(v, motivo))}`, '_blank');
         }
 
+        // Arma el texto del mensaje de cancelación (sin abrir ninguna
+        // ventana), igual que armarMensajeReapertura, para reutilizarlo
+        // tanto de forma inmediata como al redirigir después de confirmar
+        // en el backend.
+        function armarMensajeCancelacion(v, motivo) {
+            return `❌ *Vacante Cancelada*\n\n` +
+                `Folio: ${v.id}\n` +
+                `Vacante: ${v.vacante || ''}\n` +
+                `Gerente/Director: ${v.gerenteDirector}\n` +
+                `Cliente: ${v.cliente}\n` +
+                `Ciudad: ${v.ciudad}\n` +
+                `Sucursal: ${v.sucursal}\n` +
+                `Estatus anterior: ${v.estatusVacante}\n` +
+                `Estatus actual: CANCELADA\n` +
+                `Motivo de la cancelación: ${motivo}\n` +
+                `Cancelada por: ${state.currentUser ? state.currentUser.nombre : ''}`;
+        }
+
+        // Arma y abre el mensaje de WhatsApp cuando se cancela una vacante,
+        // avisando el folio y el motivo. Igual que enviarWhatsAppReapertura,
+        // no fija un número: el usuario elige a quién enviarlo. OJO: esta
+        // función solo funciona si se llama de forma SÍNCRONA, dentro del
+        // mismo clic del usuario (ver el patrón de "ventana pre-abierta" en
+        // confirmarCancelacion()).
+        function enviarWhatsAppCancelacion(v, motivo) {
+            window.open(`https://wa.me/?text=${encodeURIComponent(armarMensajeCancelacion(v, motivo))}`, '_blank');
+        }
+
         function notificarCRM2Vacante(v) {
             fetch(NOTIF_APPS_SCRIPT_URL, {
                 method: 'POST',
@@ -721,15 +749,36 @@
             state.cancelacionError = '';
             render();
 
+            // IMPORTANTE: la ventana de WhatsApp se abre AQUÍ, de forma
+            // síncrona, todavía dentro del clic del usuario. Si se abriera
+            // después del "await" de abajo, el navegador la bloquea como
+            // pop-up sin avisar. Se abre en blanco con un mensaje de espera
+            // y se redirige a wa.me solo si el backend confirma la
+            // cancelación; si no, se cierra sola.
+            const ventanaWhats = window.open('', '_blank');
+            if (ventanaWhats) {
+                ventanaWhats.document.write('Confirmando cancelación, un momento...');
+            }
+
             try {
                 const resultado = await cancelarVacanteEnSheet(v.id, motivo);
                 if (resultado && resultado.ok) {
                     state.showCancelacionModal = false;
                     state.cancelacionLoading = false;
                     render();
+                    if (ventanaWhats && !ventanaWhats.closed) {
+                        ventanaWhats.location.href = `https://wa.me/?text=${encodeURIComponent(armarMensajeCancelacion(v, motivo))}`;
+                    } else {
+                        // El navegador bloqueó incluso la ventana en blanco
+                        // (poco común, pero puede pasar); se intenta el
+                        // método directo como último recurso, aunque también
+                        // podría bloquearse.
+                        enviarWhatsAppCancelacion(v, motivo);
+                    }
                     alert(`Vacante ${v.id} cancelada correctamente. Ya no podrá reabrirse.`);
                     cargarVacantesDesdeSheet();
                 } else {
+                    if (ventanaWhats && !ventanaWhats.closed) ventanaWhats.close();
                     state.cancelacionLoading = false;
                     state.cancelacionError = (resultado && resultado.mensaje) ||
                         'No se pudo cancelar la vacante. Es posible que su estatus haya cambiado; vuelve a buscar el folio.';
@@ -737,6 +786,7 @@
                 }
             } catch (err) {
                 console.error('Error al cancelar la vacante:', err);
+                if (ventanaWhats && !ventanaWhats.closed) ventanaWhats.close();
                 state.cancelacionLoading = false;
                 state.cancelacionError = 'Error de conexión al cancelar la vacante. Intenta de nuevo.';
                 render();
