@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporte de Vacantes</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <style>
+        /* --- Tema claro: sobreescribe los colores oscuros cuando body tiene .light-theme --- */
+        body.light-theme { background-color: #f3f4f6 !important; }
+        body.light-theme .bg-\[\#0a0a0a\] { background-color: #ffffff !important; }
+        body.light-theme .bg-\[\#0f0f0f\] { background-color: #ffffff !important; }
+        body.light-theme .bg-\[\#1a1a1a\] { background-color: #ffffff !important; }
+        body.light-theme .bg-\[\#151515\] { background-color: #f3f4f6 !important; }
+        body.light-theme .bg-\[\#252525\] { background-color: #f3f4f6 !important; }
+        body.light-theme .border-gray-700 { border-color: #d1d5db !important; }
+        body.light-theme .border-gray-800 { border-color: #e5e7eb !important; }
+        body.light-theme .text-white { color: #111827 !important; }
+        body.light-theme .text-gray-300 { color: #374151 !important; }
+        body.light-theme .text-gray-400 { color: #6b7280 !important; }
+        body.light-theme .text-gray-500 { color: #6b7280 !important; }
+        body.light-theme .placeholder-gray-500::placeholder { color: #9ca3af !important; }
+        body.light-theme .hover\:bg-gray-900:hover { background-color: #f3f4f6 !important; }
+        body.light-theme .hover\:bg-gray-600:hover { background-color: #d1d5db !important; }
+        body.light-theme .hover\:bg-\[\#252525\]:hover { background-color: #f3f4f6 !important; }
+        body.light-theme .bg-gray-700 { background-color: #e5e7eb !important; color: #111827 !important; }
+        body.light-theme .cursor-not-allowed.bg-\[\#151515\] { color: #6b7280 !important; }
+
+        /* --- Animaciones de la pantalla de login (verde corporativo, como el logo) --- */
+        :root { --brand-green: #8CC63F; --brand-green-dark: #6EA82D; }
+        @keyframes loginCardIn {
+            0% { opacity: 0; transform: translateY(24px) scale(0.96); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes loginFieldIn {
+            0% { opacity: 0; transform: translateY(10px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes loginIconPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.08); }
+        }
+        @keyframes loginGlow {
+            0%, 100% { box-shadow: 0 0 0 rgba(140, 198, 63, 0); }
+            50% { box-shadow: 0 0 30px rgba(140, 198, 63, 0.28); }
+        }
+        .login-card {
+            position: relative;
+            z-index: 10;
+            animation: loginCardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both, loginGlow 3.5s ease-in-out 0.6s infinite;
+        }
+        .login-icon {
+            animation: loginIconPulse 2.2s ease-in-out infinite;
+        }
+        .login-field-1 { animation: loginFieldIn 0.45s ease-out 0.15s both; }
+        .login-field-2 { animation: loginFieldIn 0.45s ease-out 0.25s both; }
+        .login-field-3 { animation: loginFieldIn 0.45s ease-out 0.35s both; }
+        .login-field-4 { animation: loginFieldIn 0.45s ease-out 0.45s both; }
+        .login-input:focus {
+            outline: none;
+            border-color: var(--brand-green) !important;
+            box-shadow: 0 0 0 2px rgba(140, 198, 63, 0.35);
+        }
+        #loginParticles {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .login-card, .login-icon, .login-field-1, .login-field-2, .login-field-3, .login-field-4 { animation: none !important; }
+            #loginParticles { display: none; }
+        }
+    </style>
+</head>
+<body class="bg-[#0a0a0a]">
+    <div id="app" class="p-6 min-h-screen"></div>
+
+    <script>
+        const icons = {
+            search: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>',
+            download: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>',
+            filter: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>',
+            plus: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>',
+            x: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
+            edit: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>',
+            sun: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
+            moon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>',
+            lock: '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>',
+            eye: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+            eyeOff: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>',
+            refresh: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>',
+            alertTriangle: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>'
+        };
+
+        // Las vacantes ya no se cargan de ejemplo: se obtienen en vivo desde
+        // el Google Sheet (REGISTRO VACANTES) al iniciar sesión.
+        const mockData = [];
+
+        /* IMPORTANTE: reemplaza esta URL por la URL de despliegue (Web App) de tu
+           Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
+           configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
+           sistemas lean/escriban en la misma hoja. */
+        const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwQyAJ8IEvwUTG2ZoR_J2zwpBzhJSkxTW0SkPQlqxutUBtr80eaSVO6oQyQ7GM9b6a4/exec';
+
+        function enviarWhatsAppVacante(v) {
+            const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
+                `Folio: ${v.id}\n` +
+                `Vacante: ${v.vacante || ''}\n` +
+                `Gerente/Director: ${v.gerenteDirector}\n` +
+                `Cliente: ${v.cliente}\n` +
+                `Motivo de la vacante: ${v.motivoVacante || ''}\n` +
+                `Ciudad: ${v.ciudad}\n` +
+                `Sucursal: ${v.sucursal}\n` +
+                `Dirección de tienda: ${v.direccionTienda || ''}\n` +
+                `Formato: ${v.formato}\n` +
+                `Prioridad: ${v.prioridad}\n` +
+                `Estatus: ${v.estatusVacante}\n` +
+                `Fecha de solicitud: ${v.fechaSolicitud}\n` +
+                `Fecha de vencimiento: ${v.fechaVencimiento}\n` +
+                `Observaciones Adicionales: ${v.requerimiento}`;
+            // Se abre WhatsApp sin número predefinido para que el usuario elija a quién enviarlo
+            window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
+        }
+
+        // Arma el texto del mensaje de reapertura (sin abrir ninguna ventana),
+        // para poder reutilizarlo tanto al abrir la pestaña de WhatsApp de
+        // inmediato como al redirigirla después de confirmar en el backend.
+        function armarMensajeReapertura(v, motivo) {
+            return `🔄 *Vacante Reaperturada*\n\n` +
+                `Folio: ${v.id}\n` +
+                `Vacante: ${v.vacante || ''}\n` +
+                `Gerente/Director: ${v.gerenteDirector}\n` +
+                `Cliente: ${v.cliente}\n` +
+                `Ciudad: ${v.ciudad}\n` +
+                `Sucursal: ${v.sucursal}\n` +
+                `Estatus anterior: ${v.estatusVacante}\n` +
+                `Estatus actual: VIGENTE-REAPERTURADO\n` +
+                `Motivo de la reapertura: ${motivo}\n` +
+                `Reabierta por: ${state.currentUser ? state.currentUser.nombre : ''}`;
+        }
+
+        // Arma y abre el mensaje de WhatsApp cuando se reabre una vacante,
+        // avisando el folio y el motivo. Igual que enviarWhatsAppVacante, no
+        // fija un número: el usuario elige a quién enviarlo.
+        // OJO: esta función solo funciona si se llama de forma SÍNCRONA,
+        // dentro del mismo clic del usuario (sin await antes). Si necesitas
+        // esperar una respuesta del backend primero, usa el patrón de
+        // "ventana pre-abierta" que se usa en confirmarReapertura().
+        function enviarWhatsAppReapertura(v, motivo) {
+            window.open(`https://wa.me/?text=${encodeURIComponent(armarMensajeReapertura(v, motivo))}`, '_blank');
+        }
+
+        function notificarCRM2Vacante(v) {
+            fetch(NOTIF_APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    accion: 'nueva_vacante',
+                    id: v.id,
+                    requerimiento: v.requerimiento,
+                    vacante: v.vacante || '',
+                    gerenteDirector: v.gerenteDirector,
+                    idTienda: v.idTienda,
+                    estado: v.estado,
+                    cliente: v.cliente,
+                    ciudad: v.ciudad,
+                    proyecto: v.proyecto,
+                    motivoVacante: v.motivoVacante || '',
+                    sucursal: v.sucursal,
+                    direccionTienda: v.direccionTienda || '',
+                    formato: v.formato,
+                    prioridad: v.prioridad,
+                    estatusVacante: v.estatusVacante,
+                    fechaSolicitud: v.fechaSolicitud,
+                    fechaVencimiento: v.fechaVencimiento,
+                    fechaCubierta: v.fechaCubierta || '',
+                    usuarioCarga: v.usuarioCarga || '',
+                    nombreCarga: v.nombreCarga || '',
+                    fechaNotificacion: new Date().toISOString()
+                })
+            }).catch(err => console.error('Error al notificar al CRM2:', err));
+        }
+
+        // Estatus desde los cuales SÍ se permite reabrir una vacante.
+        const ESTATUS_REAPERTURABLES = ['CUBIERTA', 'FORMALIZADO'];
+
+        // Pide al backend (Code.gs) que reabra la vacante: busca el folio en la
+        // hoja REGISTRO VACANTES, valida el estatus actual otra vez del lado del
+        // servidor (por seguridad) y, si aplica, cambia el estatus y guarda el
+        // motivo de reapertura.
+        async function reabrirVacanteEnSheet(id, motivoReapertura) {
+            const res = await fetch(NOTIF_APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    accion: 'reabrir_vacante',
+                    id,
+                    motivoReapertura,
+                    usuario: state.currentUser ? state.currentUser.usuario : '',
+                    nombreUsuario: state.currentUser ? state.currentUser.nombre : ''
+                })
+            });
+            return res.json();
+        }
+
+        let state = {
+            vacancies: [...mockData],
+            searchTerm: '',
+            filterEstatusVacante: 'Todos',
+            filterPrioridad: 'Todas',
+            filterGerencia: 'Todas',
+            filterCard: 'total',   // 'total' | 'activas' | 'prioridadAlta' | 'cubiertas' | 'reaperturas' — filtro activo por tarjeta
+            showNewVacancyModal: false,
+            currentUser: null,      // { usuario, nombre } una vez logueado
+            loginError: '',
+            loginLoading: false,
+            catalogos: { puestos: [], motivos: [], prioridades: [], gerentes: [] },
+            theme: localStorage.getItem('vacantes_theme') || 'dark',
+
+            // --- Flujo de Reapertura ---
+            showReaperturaModal: false,
+            reaperturaStep: 'buscar',   // 'buscar' | 'confirmar'
+            reaperturaFolio: '',
+            reaperturaVacante: null,    // vacante encontrada, si aplica para reabrir
+            reaperturaError: '',        // mensaje de error/aviso a mostrar
+            reaperturaMotivo: '',
+            reaperturaLoading: false
+        };
+
+        function aplicarTema() {
+            document.body.classList.toggle('light-theme', state.theme === 'light');
+        }
+
+        window.toggleTheme = function() {
+            state.theme = state.theme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('vacantes_theme', state.theme);
+            aplicarTema();
+            render();
+        };
+
+        // Trae los catálogos (Puestos, Motivo, Prioridad) desde la hoja CATALOGOS.
+        async function cargarCatalogos() {
+            try {
+                const res = await fetch(NOTIF_APPS_SCRIPT_URL + '?accion=obtener_catalogos');
+                const data = await res.json();
+                state.catalogos = {
+                    puestos: data.puestos || [],
+                    motivos: data.motivos || [],
+                    prioridades: data.prioridades || [],
+                    gerentes: data.gerentes || []
+                };
+            } catch (err) {
+                console.error('Error al cargar catálogos:', err);
+            }
+        }
+
+        // Busca sucursales por NOMBRE (columna "Sucursal") en la hoja BD TIENDAS.
+        // Puede regresar varios resultados si hay más de una sucursal con el mismo
+        // nombre (mismo nombre, distinto ID/dirección/ciudad), para que el usuario
+        // elija la exacta.
+        let tiendaMatchesActuales = [];
+        async function buscarTiendasPorNombre(nombreSucursal) {
+            try {
+                const res = await fetch(NOTIF_APPS_SCRIPT_URL + '?accion=buscar_tiendas_por_nombre&sucursal=' + encodeURIComponent(nombreSucursal));
+                const data = await res.json();
+                return (data && data.encontrada && Array.isArray(data.resultados)) ? data.resultados : [];
+            } catch (err) {
+                console.error('Error al buscar sucursales por nombre:', err);
+                return [];
+            }
+        }
+
+        // Valida usuario/contraseña contra la hoja "Usuarios" en el Google Sheet.
+        // El backend (Code.gs) debe exponer la acción 'validar_login' que busque
+        // el usuario en esa hoja y regrese { ok: true, nombre: '...' } o { ok: false }.
+        async function validarLogin(usuario, password) {
+            const res = await fetch(NOTIF_APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ accion: 'validar_login', usuario, password })
+            });
+            return res.json();
+        }
+
+        window.cerrarSesion = function() {
+            state.currentUser = null;
+            localStorage.removeItem('vacantes_currentUser');
+            render();
+        };
+
+        const estatusOptions = ['VIGENTE', 'CANCELADA', 'CUBIERTA', 'PAUSADO', 'FORMALIZADO', 'NEGOCIACION ALIADO EXTERNO', 'REGULARIZACION', 'VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
+
+        function getPrioridadColor(prioridad) {
+            const colors = { 'Alta': 'bg-red-100 text-red-800', 'Media': 'bg-yellow-100 text-yellow-800', 'Baja': 'bg-green-100 text-green-800' };
+            return colors[prioridad] || 'bg-gray-100 text-gray-800';
+        }
+
+        function getEstatusColor(estatus) {
+            const isLight = state.theme === 'light';
+            const colorsDark = {
+                'VIGENTE': 'bg-blue-500 text-white', 'CANCELADA': 'bg-red-500 text-white', 'CUBIERTA': 'bg-gray-500 text-white',
+                'PAUSADO': 'bg-yellow-500 text-white', 'FORMALIZADO': 'bg-green-500 text-white', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-500 text-white',
+                'REGULARIZACION': 'bg-orange-500 text-white', 'VIGENTE-REAPERTURADO': 'bg-cyan-500 text-white', 'FORMALIZADO POR AP-POR REAPERTURA': 'bg-pink-500 text-white'
+            };
+            const colorsLight = {
+                'VIGENTE': 'bg-blue-100 text-blue-800', 'CANCELADA': 'bg-red-100 text-red-800', 'CUBIERTA': 'bg-gray-200 text-gray-700',
+                'PAUSADO': 'bg-yellow-100 text-yellow-800', 'FORMALIZADO': 'bg-green-100 text-green-800', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-100 text-purple-800',
+                'REGULARIZACION': 'bg-orange-100 text-orange-800', 'VIGENTE-REAPERTURADO': 'bg-cyan-100 text-cyan-800', 'FORMALIZADO POR AP-POR REAPERTURA': 'bg-pink-100 text-pink-800'
+            };
+            const colors = isLight ? colorsLight : colorsDark;
+            return colors[estatus] || (isLight ? 'bg-gray-100 text-gray-600' : 'bg-gray-400 text-white');
+        }
+
+        // Convierte una fecha 'YYYY-MM-DD' a formato corto 'DD/MM/YY' para mostrar en tabla.
+        function fechaCorta(fechaISO) {
+            if (!fechaISO) return '';
+            // Se queda solo con la parte de fecha (YYYY-MM-DD), descartando
+            // cualquier hora/timezone que venga pegada (ej. "2026-07-07T06:00:00.000Z").
+            const soloFecha = String(fechaISO).split('T')[0];
+            const partes = soloFecha.split('-');
+            if (partes.length !== 3) return soloFecha;
+            const [anio, mes, dia] = partes;
+            return `${dia}/${mes}/${anio.slice(2)}`;
+        }
+
+        // Lista de gerencias (Gerente Operativo/Director) únicas, tomadas de las
+        // vacantes ya cargadas, para llenar el filtro de Gerencia.
+        function getGerenciasUnicas() {
+            const set = new Set(state.vacancies.map(v => v.gerenteDirector).filter(Boolean));
+            return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+        }
+
+        // Aplica únicamente los filtros de búsqueda + selects (sin el filtro de tarjeta),
+        // para que los contadores de las tarjetas se mantengan estables sin importar
+        // cuál tarjeta esté activa.
+        function getFilteredVacanciesBase() {
+            return state.vacancies.filter(v => {
+                const match = v.gerenteDirector.toLowerCase().includes(state.searchTerm.toLowerCase()) || v.cliente.toLowerCase().includes(state.searchTerm.toLowerCase());
+                const matchE = state.filterEstatusVacante === 'Todos' || v.estatusVacante === state.filterEstatusVacante;
+                const matchP = state.filterPrioridad === 'Todas' || v.prioridad === state.filterPrioridad;
+                const matchG = state.filterGerencia === 'Todas' || v.gerenteDirector === state.filterGerencia;
+                return match && matchE && matchP && matchG;
+            });
+        }
+
+        // Estatus que se consideran "Reapertura" para el conteo/filtro de la tarjeta.
+        const ESTATUS_DE_REAPERTURA = ['VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
+
+        // Aplica, sobre una lista ya filtrada por búsqueda/selects, el filtro
+        // adicional de la tarjeta de estadística seleccionada (state.filterCard).
+        function aplicarFiltroTarjeta(lista) {
+            switch (state.filterCard) {
+                case 'activas': return lista.filter(v => v.estado === 'Activo');
+                case 'prioridadAlta': return lista.filter(v => v.prioridad === 'Alta');
+                case 'cubiertas': return lista.filter(v => v.estatusVacante === 'CUBIERTA');
+                case 'reaperturas': return lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante));
+                default: return lista;
+            }
+        }
+
+        function getFilteredVacancies() {
+            return aplicarFiltroTarjeta(getFilteredVacanciesBase());
+        }
+
+        // Click en una tarjeta de estadística: si ya estaba activa, la desactiva
+        // (vuelve a 'total'); si no, la activa y filtra la tabla.
+        window.filtrarPorTarjeta = function(tarjeta) {
+            state.filterCard = (state.filterCard === tarjeta) ? 'total' : tarjeta;
+            render();
+        };
+
+        // Exporta únicamente la tabla de vacantes (respetando búsqueda/filtros activos) a un archivo .xlsx
+        window.exportarExcel = function() {
+            const fv = getFilteredVacancies();
+            if (!fv.length) {
+                alert('No hay vacantes para exportar.');
+                return;
+            }
+            const filas = fv.map(v => ({
+                'FOLIO': v.id,
+                'VACANTE': v.vacante || '',
+                'GERENTE OPERATIVO/DIRECTOR': v.gerenteDirector,
+                'ID TIENDA': v.idTienda,
+                'ESTADO': v.estado,
+                'CIUDAD': v.ciudad,
+                'CLIENTE': v.cliente,
+                'PROYECTO': v.proyecto || 'N/A',
+                'FORMATO': v.formato,
+                'SUCURSAL': v.sucursal,
+                'DIRECCIÓN DE TIENDA': v.direccionTienda || '',
+                'FECHA DE SOLICITUD': fechaCorta(v.fechaSolicitud),
+                'FECHA DE VENCIMIENTO': fechaCorta(v.fechaVencimiento),
+                'PRIORIDAD': v.prioridad,
+                'ESTATUS VACANTE': v.estatusVacante,
+                'DÍAS EN PROCESO': calcularDiasProceso(v) !== null ? calcularDiasProceso(v) : '',
+                'MOTIVO DE LA VACANTE': v.motivoVacante || '',
+                'OBSERVACIONES ADICIONALES': v.requerimiento
+            }));
+            const ws = XLSX.utils.json_to_sheet(filas);
+            ws['!cols'] = Object.keys(filas[0]).map(k => ({ wch: Math.max(k.length, 14) }));
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Vacantes');
+            const fecha = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(wb, `Vacantes_${fecha}.xlsx`);
+        };
+
+        // Días transcurridos desde la fecha de solicitud hasta que se cubre la vacante
+        // (o hasta hoy, si aún no se cubre). El estatus lo controla el CRM2.
+        function calcularDiasProceso(v) {
+            if (!v.fechaSolicitud) return null;
+            const inicio = new Date(v.fechaSolicitud + 'T00:00:00');
+            const esCubierta = v.estatusVacante === 'CUBIERTA';
+            const fin = (esCubierta && v.fechaCubierta) ? new Date(v.fechaCubierta + 'T00:00:00') : new Date();
+            const dias = Math.max(0, Math.round((fin - inicio) / (1000 * 60 * 60 * 24)));
+            return dias;
+        }
+
+        function renderDiasProceso(v) {
+            const dias = calcularDiasProceso(v);
+            if (dias === null) return '<span class="text-gray-500 text-xs">-</span>';
+            const esCubierta = v.estatusVacante === 'CUBIERTA';
+            const isLight = state.theme === 'light';
+            let color;
+            if (esCubierta) {
+                color = isLight ? 'bg-emerald-100 text-emerald-800' : 'bg-emerald-900 text-emerald-300';
+            } else if (dias > 30) {
+                color = isLight ? 'bg-red-100 text-red-800' : 'bg-red-900 text-red-300';
+            } else {
+                color = isLight ? 'bg-slate-100 text-slate-700' : 'bg-slate-800 text-slate-300';
+            }
+            const etiqueta = esCubierta ? `${dias} día${dias === 1 ? '' : 's'} (cubierta)` : `${dias} día${dias === 1 ? '' : 's'}`;
+            return `<span class="px-2 py-1 rounded-full text-xs ${color}">${etiqueta}</span>`;
+        }
+
+        // Normaliza un registro proveniente del Google Sheet (columnas en PascalCase)
+        // al formato interno usado por la vista.
+        function normalizarVacanteDesdeSheet(row) {
+            return {
+                id: String(row.ID || ''),
+                requerimiento: row['Observaciones Adicionales'] || '',
+                vacante: row.Vacante || '',
+                gerenteDirector: row.GerenteDirector || '',
+                idTienda: row.IdTienda || '',
+                estado: row.Estado || 'Activo',
+                ciudad: row.Ciudad || '',
+                cliente: row.Cliente || '',
+                proyecto: row.Proyecto || '',
+                motivoVacante: row.MotivoVacante || '',
+                formato: row.Formato || '',
+                sucursal: row.Sucursal || '',
+                direccionTienda: row.DireccionTienda || '',
+                fechaSolicitud: row.FechaSolicitud || '',
+                fechaVencimiento: row.FechaVencimiento || '',
+                prioridad: row.Prioridad || 'Media',
+                estatusVacante: row.EstatusVacante || 'VIGENTE',
+                fechaCubierta: row.FechaCubierta || '',
+                usuarioCarga: row.UsuarioCarga || '',
+                nombreCarga: row.NombreCarga || ''
+            };
+        }
+
+        // El estatus de cada vacante lo controla el CRM2: aquí solo lo leemos
+        // desde el mismo Google Sheet para mantenerlo sincronizado.
+        async function cargarVacantesDesdeSheet() {
+            try {
+                const res = await fetch(NOTIF_APPS_SCRIPT_URL + '?accion=obtener_vacantes');
+                const data = await res.json();
+                if (Array.isArray(data) && data.length) {
+                    state.vacancies = data.map(normalizarVacanteDesdeSheet);
+                    // No repintar la pantalla si el usuario tiene el formulario de
+                    // Nueva Vacante abierto: se perdería lo que está escribiendo.
+                    // Los datos ya quedaron actualizados en el estado, y se verán
+                    // en cuanto cierre el modal o vuelva a renderizar.
+                    if (!state.showNewVacancyModal) {
+                        render();
+                    }
+                }
+            } catch (err) {
+                console.error('Error al cargar vacantes desde Google Sheets:', err);
+            }
+        }
+
+        // --- Flujo de Reapertura ---
+
+        window.abrirReapertura = function() {
+            state.showReaperturaModal = true;
+            state.reaperturaStep = 'buscar';
+            state.reaperturaFolio = '';
+            state.reaperturaVacante = null;
+            state.reaperturaError = '';
+            state.reaperturaMotivo = '';
+            state.reaperturaLoading = false;
+            render();
+        };
+
+        window.cerrarReapertura = function() {
+            state.showReaperturaModal = false;
+            render();
+        };
+
+        // Vuelve a la pantalla de búsqueda de folio (por si el usuario se
+        // equivocó o quiere intentar con otro folio).
+        window.reintentarReapertura = function() {
+            state.reaperturaStep = 'buscar';
+            state.reaperturaVacante = null;
+            state.reaperturaError = '';
+            state.reaperturaMotivo = '';
+            render();
+        };
+
+        // Busca el folio dentro de las vacantes ya cargadas (state.vacancies) y
+        // valida si su estatus permite reapertura (CUBIERTA o FORMALIZADO).
+        window.buscarFolioReapertura = function() {
+            const input = document.getElementById('reaperturaFolioInput');
+            const folio = (input ? input.value : '').trim();
+            state.reaperturaFolio = folio;
+
+            if (!folio) {
+                state.reaperturaError = 'Escribe un folio para buscar.';
+                render();
+                return;
+            }
+
+            const encontrada = state.vacancies.find(v => String(v.id).trim().toUpperCase() === folio.toUpperCase());
+
+            if (!encontrada) {
+                state.reaperturaVacante = null;
+                state.reaperturaError = `No se encontró ninguna vacante con el folio "${folio}".`;
+                render();
+                return;
+            }
+
+            const estatusActual = (encontrada.estatusVacante || '').toUpperCase();
+            if (!ESTATUS_REAPERTURABLES.includes(estatusActual)) {
+                state.reaperturaVacante = null;
+                state.reaperturaError = `La vacante ${encontrada.id} no se puede reabrir. Su estatus actual es "${encontrada.estatusVacante}". Solo se pueden reabrir vacantes en estatus CUBIERTA o FORMALIZADO.`;
+                render();
+                return;
+            }
+
+            state.reaperturaVacante = encontrada;
+            state.reaperturaError = '';
+            state.reaperturaStep = 'confirmar';
+            render();
+        };
+
+        // Envía la reapertura al backend: cambia el estatus y guarda el motivo.
+        window.confirmarReapertura = async function() {
+            const textarea = document.getElementById('reaperturaMotivoInput');
+            const motivo = (textarea ? textarea.value : '').trim();
+
+            if (!motivo) {
+                state.reaperturaError = 'Escribe el motivo de la reapertura.';
+                render();
+                return;
+            }
+
+            const v = state.reaperturaVacante;
+            state.reaperturaLoading = true;
+            state.reaperturaError = '';
+            render();
+
+            // IMPORTANTE: la ventana de WhatsApp se abre AQUÍ, de forma síncrona,
+            // todavía dentro del clic del usuario. Si se abriera después del
+            // "await" de abajo, el navegador la bloquea como pop-up sin avisar
+            // (así se comportaba antes: el WhatsApp "no mandaba" nada). Se abre
+            // en blanco con un mensaje de espera y se redirige a wa.me solo si
+            // el backend confirma la reapertura; si no, se cierra sola.
+            const ventanaWhats = window.open('', '_blank');
+            if (ventanaWhats) {
+                ventanaWhats.document.write('Confirmando reapertura, un momento...');
+            }
+
+            try {
+                const resultado = await reabrirVacanteEnSheet(v.id, motivo);
+                if (resultado && resultado.ok) {
+                    state.showReaperturaModal = false;
+                    state.reaperturaLoading = false;
+                    render();
+                    if (ventanaWhats && !ventanaWhats.closed) {
+                        ventanaWhats.location.href = `https://wa.me/?text=${encodeURIComponent(armarMensajeReapertura(v, motivo))}`;
+                    } else {
+                        // El navegador bloqueó incluso la ventana en blanco (poco
+                        // común, pero puede pasar); se intenta el método directo
+                        // como último recurso, aunque también podría bloquearse.
+                        enviarWhatsAppReapertura(v, motivo);
+                    }
+                    alert(`Vacante ${v.id} reabierta correctamente.`);
+                    cargarVacantesDesdeSheet();
+                } else {
+                    if (ventanaWhats && !ventanaWhats.closed) ventanaWhats.close();
+                    state.reaperturaLoading = false;
+                    state.reaperturaError = (resultado && resultado.mensaje) ||
+                        'No se pudo reabrir la vacante. Es posible que su estatus haya cambiado; vuelve a buscar el folio.';
+                    render();
+                }
+            } catch (err) {
+                console.error('Error al reabrir la vacante:', err);
+                if (ventanaWhats && !ventanaWhats.closed) ventanaWhats.close();
+                state.reaperturaLoading = false;
+                state.reaperturaError = 'Error de conexión al reabrir la vacante. Intenta de nuevo.';
+                render();
+            }
+        };
+
+        window.openModal = function() {
+            tiendaMatchesActuales = [];
+            state.showNewVacancyModal = true;
+            render();
+            cargarCatalogos().then(render);
+        };
+
+        window.closeModal = function() {
+            tiendaMatchesActuales = [];
+            state.showNewVacancyModal = false;
+            render();
+        };
+
+        // Fondo animado de puntos flotando (verde corporativo) para la pantalla de login.
+        // El loop se detiene solo cuando el canvas ya no existe en el DOM (login superado).
+        let _loginParticlesRAF = null;
+        function iniciarParticulasLogin() {
+            const canvas = document.getElementById('loginParticles');
+            if (!canvas) return;
+            if (_loginParticlesRAF) cancelAnimationFrame(_loginParticlesRAF);
+            const ctx = canvas.getContext('2d');
+            let w, h;
+            function resize() {
+                w = canvas.width = canvas.offsetWidth;
+                h = canvas.height = canvas.offsetHeight;
+            }
+            resize();
+            window.addEventListener('resize', resize);
+
+            const cantidad = Math.max(20, Math.min(60, Math.floor((w * h) / 16000)));
+            const puntos = Array.from({ length: cantidad }, () => ({
+                x: Math.random() * w,
+                y: Math.random() * h,
+                vx: (Math.random() - 0.5) * 0.25,
+                vy: (Math.random() - 0.5) * 0.25,
+                r: Math.random() * 1.6 + 0.8
+            }));
+
+            function frame() {
+                if (!document.getElementById('loginParticles')) { _loginParticlesRAF = null; return; }
+                ctx.clearRect(0, 0, w, h);
+                puntos.forEach(p => {
+                    p.x += p.vx; p.y += p.vy;
+                    if (p.x <= 0 || p.x >= w) p.vx *= -1;
+                    if (p.y <= 0 || p.y >= h) p.vy *= -1;
+                });
+                for (let i = 0; i < puntos.length; i++) {
+                    for (let j = i + 1; j < puntos.length; j++) {
+                        const dx = puntos[i].x - puntos[j].x, dy = puntos[i].y - puntos[j].y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < 110) {
+                            ctx.strokeStyle = `rgba(140, 198, 63, ${0.14 * (1 - dist / 110)})`;
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(puntos[i].x, puntos[i].y);
+                            ctx.lineTo(puntos[j].x, puntos[j].y);
+                            ctx.stroke();
+                        }
+                    }
+                }
+                puntos.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(140, 198, 63, 0.6)';
+                    ctx.fill();
+                });
+                _loginParticlesRAF = requestAnimationFrame(frame);
+            }
+            frame();
+        }
+
+        function renderLogin() {
+            aplicarTema();
+            document.getElementById('app').innerHTML = `
+                <div class="min-h-[80vh] flex items-center justify-center relative overflow-hidden">
+                    <canvas id="loginParticles"></canvas>
+                    <button onclick="toggleTheme()" title="Cambiar tema" class="absolute top-0 right-0 p-2 text-gray-400 hover:text-white bg-[#1a1a1a] border border-gray-800 rounded-lg z-10">
+                        ${state.theme === 'dark' ? icons.sun : icons.moon}
+                    </button>
+                    <div class="login-card bg-[#1a1a1a] border border-gray-800 rounded-lg p-8 w-full max-w-sm shadow-lg">
+                        <div class="login-icon flex items-center justify-center w-14 h-14 mx-auto mb-4 rounded-full" style="background: rgba(140,198,63,0.15); color: var(--brand-green);">
+                            ${icons.lock}
+                        </div>
+                        <h1 class="text-white text-2xl font-bold mb-1 text-center">Iniciar Sesión</h1>
+                        <p class="text-gray-400 text-sm mb-6 text-center">Reporte de Vacantes</p>
+                        <form id="loginForm" class="space-y-4">
+                            <div class="login-field-1">
+                                <label class="block text-gray-300 text-sm mb-2">Usuario</label>
+                                <input type="text" required name="usuario" autocomplete="username" class="login-input w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
+                            </div>
+                            <div class="login-field-2">
+                                <label class="block text-gray-300 text-sm mb-2">Contraseña</label>
+                                <div class="relative">
+                                    <input type="password" id="loginPasswordInput" required name="password" autocomplete="current-password" class="login-input w-full px-3 py-2 pr-10 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
+                                    <button type="button" id="toggleLoginPassword" tabindex="-1" title="Mostrar/ocultar contraseña" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-[var(--brand-green)] transition-colors">
+                                        ${icons.eye}
+                                    </button>
+                                </div>
+                            </div>
+                            ${state.loginError ? `<p class="login-field-3 text-red-400 text-sm">${state.loginError}</p>` : ''}
+                            <button type="submit" ${state.loginLoading ? 'disabled' : ''} class="login-field-4 w-full px-4 py-2 text-white rounded-lg disabled:opacity-60 flex items-center justify-center gap-2 transition-colors" style="background: var(--brand-green-dark);" onmouseover="this.style.background='#5c8f25'" onmouseout="this.style.background='var(--brand-green-dark)'">
+                                ${state.loginLoading ? '<span class="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span> Verificando...' : 'Entrar'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            `;
+
+            const toggleBtn = document.getElementById('toggleLoginPassword');
+            const pwdInput = document.getElementById('loginPasswordInput');
+            if (toggleBtn && pwdInput) {
+                toggleBtn.addEventListener('click', () => {
+                    const mostrar = pwdInput.type === 'password';
+                    pwdInput.type = mostrar ? 'text' : 'password';
+                    toggleBtn.innerHTML = mostrar ? icons.eyeOff : icons.eye;
+                });
+            }
+
+            iniciarParticulasLogin();
+
+            document.getElementById('loginForm').addEventListener('submit', async e => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const usuario = fd.get('usuario').trim();
+                const password = fd.get('password');
+                state.loginLoading = true;
+                state.loginError = '';
+                renderLogin();
+                try {
+                    const resultado = await validarLogin(usuario, password);
+                    if (resultado && resultado.ok) {
+                        state.currentUser = { usuario, nombre: resultado.nombre || usuario };
+                        localStorage.setItem('vacantes_currentUser', JSON.stringify(state.currentUser));
+                        state.loginLoading = false;
+                        render();
+                        cargarVacantesDesdeSheet();
+                        cargarCatalogos();
+                    } else {
+                        state.loginLoading = false;
+                        state.loginError = 'Usuario o contraseña incorrectos.';
+                        renderLogin();
+                    }
+                } catch (err) {
+                    console.error('Error al validar login:', err);
+                    state.loginLoading = false;
+                    state.loginError = 'No se pudo conectar con el servidor. Intenta de nuevo.';
+                    renderLogin();
+                }
+            });
+        }
+
+        function render() {
+            aplicarTema();
+            if (!state.currentUser) {
+                renderLogin();
+                return;
+            }
+            const baseFv = getFilteredVacanciesBase();
+            const fv = aplicarFiltroTarjeta(baseFv);
+            const conteoActivas = baseFv.filter(v => v.estado === 'Activo').length;
+            const conteoPrioridadAlta = baseFv.filter(v => v.prioridad === 'Alta').length;
+            const conteoCubiertas = baseFv.filter(v => v.estatusVacante === 'CUBIERTA').length;
+            const conteoReaperturas = baseFv.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)).length;
+            const claseTarjeta = (tarjeta) => `bg-[#1a1a1a] p-4 rounded-lg shadow-lg border text-left w-full transition-colors hover:border-blue-500 ${state.filterCard === tarjeta ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-800'}`;
+            // Guardamos el scroll de la tabla y de la ventana antes de
+            // reemplazar el HTML, porque al recrear el contenedor el
+            // navegador lo monta con scrollTop = 0 y "salta" la vista.
+            const tablaScrollPrev = document.getElementById('tablaScrollContainer');
+            const tablaScrollTop = tablaScrollPrev ? tablaScrollPrev.scrollTop : 0;
+            const windowScrollY = window.scrollY;
+            document.getElementById('app').innerHTML = `
+                <div class="mb-6 flex items-center justify-between">
+                    <div>
+                        <h1 class="text-white mb-2 text-3xl font-bold">Reporte de Vacantes</h1>
+                        <p class="text-gray-400">Gestión y seguimiento de requisiciones de personal</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <button onclick="toggleTheme()" title="Cambiar tema" class="p-2 text-gray-400 hover:text-white bg-[#1a1a1a] border border-gray-800 rounded-lg">
+                            ${state.theme === 'dark' ? icons.sun : icons.moon}
+                        </button>
+                        <div class="text-right">
+                            <p class="text-white text-sm">${state.currentUser.nombre}</p>
+                            <button onclick="cerrarSesion()" class="text-gray-400 hover:text-white text-xs underline">Cerrar sesión</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-6 grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <button type="button" onclick="filtrarPorTarjeta('total')" class="${claseTarjeta('total')}">
+                        <p class="text-gray-400 text-sm">Total de Vacantes</p>
+                        <p class="text-white text-2xl font-bold mt-1">${baseFv.length}</p>
+                    </button>
+                    <button type="button" onclick="filtrarPorTarjeta('activas')" class="${claseTarjeta('activas')}">
+                        <p class="text-gray-400 text-sm">Vacantes Activas</p>
+                        <p class="text-white text-2xl font-bold mt-1">${conteoActivas}</p>
+                    </button>
+                    <button type="button" onclick="filtrarPorTarjeta('prioridadAlta')" class="${claseTarjeta('prioridadAlta')}">
+                        <p class="text-gray-400 text-sm">Prioridad Alta</p>
+                        <p class="text-white text-2xl font-bold mt-1">${conteoPrioridadAlta}</p>
+                    </button>
+                    <button type="button" onclick="filtrarPorTarjeta('cubiertas')" class="${claseTarjeta('cubiertas')}">
+                        <p class="text-gray-400 text-sm">Vacantes Cubiertas</p>
+                        <p class="text-white text-2xl font-bold mt-1">${conteoCubiertas}</p>
+                    </button>
+                    <button type="button" onclick="filtrarPorTarjeta('reaperturas')" class="${claseTarjeta('reaperturas')}">
+                        <p class="text-gray-400 text-sm">Reaperturas</p>
+                        <p class="text-white text-2xl font-bold mt-1">${conteoReaperturas}</p>
+                    </button>
+                </div>
+
+                <div class="bg-[#1a1a1a] rounded-lg shadow-lg p-4 mb-6 border border-gray-800">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                        <div class="sm:col-span-2">
+                            <div class="relative">
+                                <div class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">${icons.search}</div>
+                                <input type="text" id="searchInput" placeholder="Buscar por gerente o cliente..." value="${state.searchTerm}" class="w-full pl-10 pr-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
+                            </div>
+                        </div>
+                        <div>
+                            <select id="filterEstatusVacante" class="w-full px-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <option value="Todos">Todos los Estatus</option>
+                                ${estatusOptions.map(op => `<option value="${op}">${op}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <select id="filterPrioridad" class="w-full px-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <option value="Todas">Todas las Prioridades</option>
+                                <option value="Alta">Alta</option>
+                                <option value="Media">Media</option>
+                                <option value="Baja">Baja</option>
+                            </select>
+                        </div>
+                        <div>
+                            <select id="filterGerencia" class="w-full px-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <option value="Todas">Todas las Gerencias</option>
+                                ${getGerenciasUnicas().map(g => `<option value="${g}">${g}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-2 mt-4">
+                        <button onclick="exportarExcel()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                            ${icons.download} Exportar a Excel
+                        </button>
+                        <button onclick="openModal()" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
+                            ${icons.plus} Nueva Vacante
+                        </button>
+                        <button onclick="abrirReapertura()" class="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors">
+                            ${icons.refresh} Reapertura
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-[#1a1a1a] rounded-lg shadow-lg overflow-hidden border border-gray-800">
+                    <div class="overflow-auto max-h-[65vh]" id="tablaScrollContainer">
+                        <table class="w-full">
+                            <thead class="sticky top-0 z-10">
+                                <tr class="bg-gradient-to-r from-blue-700 to-blue-800">
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FOLIO</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">VACANTE</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">GERENTE OPERATIVO/DIRECTOR</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">ID TIENDA</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">ESTADO</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">CIUDAD</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">CLIENTE</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">PROYECTO</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FORMATO</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">SUCURSAL</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">DIRECCIÓN DE TIENDA</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FECHA DE SOLICITUD</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FECHA DE VENCIMIENTO</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">PRIORIDAD</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-red-700">ESTATUS VACANTE</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">DÍAS EN PROCESO</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">MOTIVO DE LA VACANTE</th>
+                                    <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">OBSERVACIONES ADICIONALES</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${fv.map((v, i) => `
+                                    <tr class="border-b border-gray-800 hover:bg-[#252525] transition-colors ${i % 2 === 0 ? 'bg-[#1a1a1a]' : 'bg-[#0f0f0f]'}">
+                                        <td class="px-4 py-3 text-sm text-blue-400 font-semibold whitespace-nowrap">${v.id}</td>
+                                        <td class="px-4 py-3 text-sm text-white">${v.vacante || ''}</td>
+                                        <td class="px-4 py-3 text-sm text-white">${v.gerenteDirector}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.idTienda}</td>
+                                        <td class="px-4 py-3 text-sm">
+                                            <span class="px-2 py-1 rounded-full text-xs ${v.estado === 'Activo' ? (state.theme === 'light' ? 'bg-green-100 text-green-800' : 'bg-green-900 text-green-300') : (state.theme === 'light' ? 'bg-gray-200 text-gray-700' : 'bg-gray-800 text-gray-300')}">${v.estado}</span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.ciudad}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.cliente}</td>
+                                        <td class="px-4 py-3 text-sm text-center">
+                                            <span class="px-2 py-1 ${v.proyecto ? (state.theme === 'light' ? 'bg-orange-100 text-orange-800' : 'bg-orange-900 text-orange-300') : (state.theme === 'light' ? 'bg-gray-200 text-gray-600' : 'bg-gray-800 text-gray-400')} rounded-full text-xs">${v.proyecto || 'N/A'}</span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.formato}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.sucursal}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.direccionTienda || ''}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${fechaCorta(v.fechaSolicitud)}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${fechaCorta(v.fechaVencimiento)}</td>
+                                        <td class="px-4 py-3 text-sm">
+                                            <span class="px-2 py-1 rounded-full text-xs ${getPrioridadColor(v.prioridad)}">${v.prioridad}</span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm">
+                                            <span class="px-3 py-1 rounded-lg text-xs ${getEstatusColor(v.estatusVacante)}">${v.estatusVacante}</span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-center">
+                                            ${renderDiasProceso(v)}
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.motivoVacante || ''}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-300">${v.requerimiento}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${fv.length === 0 ? '<div class="text-center py-12"><p class="text-gray-500">No se encontraron vacantes</p></div>' : ''}
+                </div>
+
+                ${state.showNewVacancyModal ? `
+                    <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+                        <div class="bg-[#1a1a1a] border border-gray-700 rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                            <div class="flex justify-between items-center mb-6">
+                                <h2 class="text-white text-2xl font-bold">Nueva Vacante</h2>
+                                <button onclick="closeModal()" class="text-gray-400 hover:text-white">${icons.x}</button>
+                            </div>
+                            <form id="newForm" class="space-y-4">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-gray-300 text-sm mb-2">Vacante (Puesto)</label>
+                                        <select required name="vacante" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                            <option value="">Selecciona...</option>
+                                            ${state.catalogos.puestos.map(p => `<option value="${p}">${p}</option>`).join('')}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-300 text-sm mb-2">Gerente Operativo/Director</label>
+                                        <select required name="gerenteDirector" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                            <option value="">Selecciona...</option>
+                                            ${state.catalogos.gerentes.map(g => `<option value="${g}">${g}</option>`).join('')}
+                                        </select>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="block text-gray-300 text-sm mb-2">Sucursal</label>
+                                        <input type="text" required name="sucursal" id="sucursalBuscarInput" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" placeholder="Escribe la sucursal y sal del campo" />
+                                        <p id="tiendaError" class="text-red-400 text-xs mt-1 hidden">No se encontró ninguna sucursal con ese nombre en BD TIENDAS.</p>
+                                    </div>
+                                    <div id="tiendaSeleccionWrapper" class="col-span-2 hidden">
+                                        <label class="block text-gray-300 text-sm mb-2">Hay más de una sucursal con ese nombre: selecciona la exacta</label>
+                                        <select id="tiendaSeleccionInput" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                        </select>
+                                    </div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">ID Tienda</label><input type="text" readonly name="idTienda" id="idTiendaInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">Estado</label><input type="text" readonly name="estado" id="estadoInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">Ciudad</label><input type="text" readonly name="ciudad" id="ciudadInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">Cliente</label><input type="text" readonly name="cliente" id="clienteInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">Proyecto</label><input type="text" readonly name="proyecto" id="proyectoInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">Formato</label><input type="text" readonly name="formato" id="formatoInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                    <div class="col-span-2"><label class="block text-gray-300 text-sm mb-2">Dirección de Tienda</label><input type="text" readonly name="direccionTienda" id="direccionTiendaInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">Fecha Solicitud</label><input type="date" required name="fechaSolicitud" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" /></div>
+                                    <div><label class="block text-gray-300 text-sm mb-2">Fecha Vencimiento</label><input type="date" required name="fechaVencimiento" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" /></div>
+                                    <div>
+                                        <label class="block text-gray-300 text-sm mb-2">Prioridad</label>
+                                        <select required name="prioridad" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                            <option value="">Selecciona...</option>
+                                            ${state.catalogos.prioridades.map(p => `<option value="${p}">${p}</option>`).join('')}
+                                        </select>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="block text-gray-300 text-sm mb-2">Motivo de la Vacante</label>
+                                        <select required name="motivoVacante" id="motivoVacanteSelect" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                            <option value="">Selecciona...</option>
+                                            ${state.catalogos.motivos.map(m => `<option value="${m}">${m}</option>`).join('')}
+                                        </select>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="block text-gray-300 text-sm mb-2">Observaciones Adicionales</label>
+                                        <input type="text" required name="requerimiento" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
+                                        <p id="avisoObservaciones" class="text-yellow-400 text-xs mt-1 hidden">COLOCA NOMBRE Y TELEFONO DEL COLABORADOR EN OBSERVACIONES</p>
+                                    </div>
+                                </div>
+                                <div class="flex gap-3 mt-6">
+                                    <button type="submit" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Guardar</button>
+                                    <button type="button" onclick="closeModal()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600">Cancelar</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${state.showReaperturaModal ? `
+                    <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+                        <div class="bg-[#1a1a1a] border border-gray-700 rounded-lg p-6 max-w-md w-full">
+                            <div class="flex justify-between items-center mb-6">
+                                <h2 class="text-white text-2xl font-bold">Reapertura de Vacante</h2>
+                                <button onclick="cerrarReapertura()" class="text-gray-400 hover:text-white">${icons.x}</button>
+                            </div>
+
+                            ${state.reaperturaStep === 'buscar' ? `
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-gray-300 text-sm mb-2">Folio de la vacante</label>
+                                        <input type="text" id="reaperturaFolioInput" value="${state.reaperturaFolio}" placeholder="Ej. FOL0012" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
+                                    </div>
+                                    ${state.reaperturaError ? `
+                                        <div class="flex items-start gap-2 ${state.theme === 'light' ? 'bg-red-50 border border-red-300 text-red-700' : 'bg-red-900/30 border border-red-800 text-red-300'} text-sm rounded-lg p-3">
+                                            <span class="mt-0.5">${icons.alertTriangle}</span>
+                                            <span>${state.reaperturaError}</span>
+                                        </div>
+                                    ` : ''}
+                                    <div class="flex gap-3 mt-2">
+                                        <button onclick="buscarFolioReapertura()" class="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700">Buscar</button>
+                                        <button onclick="cerrarReapertura()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600">Cancelar</button>
+                                    </div>
+                                </div>
+                            ` : `
+                                <div class="space-y-4">
+                                    <div class="bg-[#0a0a0a] border border-gray-700 rounded-lg p-4 space-y-1">
+                                        <p class="text-white text-sm"><span class="text-gray-400">Folio:</span> ${state.reaperturaVacante.id}</p>
+                                        <p class="text-white text-sm"><span class="text-gray-400">Vacante:</span> ${state.reaperturaVacante.vacante || ''}</p>
+                                        <p class="text-white text-sm"><span class="text-gray-400">Sucursal:</span> ${state.reaperturaVacante.sucursal || ''}</p>
+                                        <p class="text-white text-sm"><span class="text-gray-400">Estatus actual:</span> <span class="px-2 py-0.5 rounded-full text-xs ${getEstatusColor(state.reaperturaVacante.estatusVacante)}">${state.reaperturaVacante.estatusVacante}</span></p>
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-300 text-sm mb-2">Motivo de la reapertura</label>
+                                        <textarea id="reaperturaMotivoInput" rows="3" placeholder="Describe por qué se reabre esta vacante..." class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">${state.reaperturaMotivo}</textarea>
+                                    </div>
+                                    ${state.reaperturaError ? `
+                                        <div class="flex items-start gap-2 ${state.theme === 'light' ? 'bg-red-50 border border-red-300 text-red-700' : 'bg-red-900/30 border border-red-800 text-red-300'} text-sm rounded-lg p-3">
+                                            <span class="mt-0.5">${icons.alertTriangle}</span>
+                                            <span>${state.reaperturaError}</span>
+                                        </div>
+                                    ` : ''}
+                                    <div class="flex gap-3 mt-2">
+                                        <button onclick="confirmarReapertura()" ${state.reaperturaLoading ? 'disabled' : ''} class="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-60">
+                                            ${state.reaperturaLoading ? 'Reabriendo...' : 'Confirmar Reapertura'}
+                                        </button>
+                                        <button onclick="reintentarReapertura()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600">Volver</button>
+                                    </div>
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                ` : ''}
+            `;
+
+            document.getElementById('searchInput').value = state.searchTerm;
+            document.getElementById('filterEstatusVacante').value = state.filterEstatusVacante;
+            document.getElementById('filterPrioridad').value = state.filterPrioridad;
+            document.getElementById('filterGerencia').value = state.filterGerencia;
+
+            document.getElementById('searchInput').addEventListener('input', e => { state.searchTerm = e.target.value; render(); });
+            document.getElementById('filterEstatusVacante').addEventListener('change', e => { state.filterEstatusVacante = e.target.value; render(); });
+            document.getElementById('filterPrioridad').addEventListener('change', e => { state.filterPrioridad = e.target.value; render(); });
+            document.getElementById('filterGerencia').addEventListener('change', e => { state.filterGerencia = e.target.value; render(); });
+
+            // Restauramos el scroll de la tabla y de la ventana que
+            // guardamos antes de repintar, para que un refresco automático
+            // (cada 30s) no mande la vista de vuelta al inicio.
+            const tablaScrollNueva = document.getElementById('tablaScrollContainer');
+            if (tablaScrollNueva) tablaScrollNueva.scrollTop = tablaScrollTop;
+            window.scrollTo(0, windowScrollY);
+
+            const form = document.getElementById('newForm');
+            if (form) {
+                const sucursalBuscarInput = document.getElementById('sucursalBuscarInput');
+                const tiendaSeleccionWrapper = document.getElementById('tiendaSeleccionWrapper');
+                const tiendaSeleccionInput = document.getElementById('tiendaSeleccionInput');
+
+                // Motivos de vacante que requieren avisar al usuario que coloque
+                // nombre y teléfono del colaborador en Observaciones Adicionales.
+                const MOTIVOS_CON_AVISO = ['BAJA PERSONAL BETA', 'BAJA ALIADO EXTERNO', 'BAJA ALIADO INTERNO', 'REGULARIZACIÓN'];
+                const motivoVacanteSelect = document.getElementById('motivoVacanteSelect');
+                const avisoObservaciones = document.getElementById('avisoObservaciones');
+                function actualizarAvisoObservaciones() {
+                    if (!motivoVacanteSelect || !avisoObservaciones) return;
+                    const valorNormalizado = motivoVacanteSelect.value.trim().toUpperCase();
+                    const mostrar = MOTIVOS_CON_AVISO.some(m => m.toUpperCase() === valorNormalizado);
+                    avisoObservaciones.classList.toggle('hidden', !mostrar);
+                }
+                if (motivoVacanteSelect) {
+                    motivoVacanteSelect.addEventListener('change', actualizarAvisoObservaciones);
+                    actualizarAvisoObservaciones();
+                }
+
+                const camposAutoTienda = ['idTiendaInput', 'estadoInput', 'ciudadInput', 'clienteInput', 'proyectoInput', 'formatoInput', 'direccionTiendaInput'];
+                function limpiarCamposTienda() {
+                    camposAutoTienda.forEach(id => { document.getElementById(id).value = ''; });
+                }
+                function llenarCamposTienda(datos) {
+                    document.getElementById('idTiendaInput').value = datos.IdTienda || '';
+                    document.getElementById('estadoInput').value = datos.Estado || '';
+                    document.getElementById('ciudadInput').value = datos.Ciudad || '';
+                    document.getElementById('clienteInput').value = datos.Cliente || '';
+                    document.getElementById('proyectoInput').value = datos.Proyecto || '';
+                    document.getElementById('formatoInput').value = datos.Formato || '';
+                    document.getElementById('direccionTiendaInput').value = datos.Direccion || '';
+                    sucursalBuscarInput.value = datos.Sucursal || sucursalBuscarInput.value;
+                }
+
+                if (sucursalBuscarInput) {
+                    sucursalBuscarInput.addEventListener('blur', async e => {
+                        const nombreSucursal = e.target.value.trim();
+                        const errorEl = document.getElementById('tiendaError');
+                        tiendaSeleccionWrapper.classList.add('hidden');
+                        tiendaSeleccionInput.innerHTML = '';
+                        limpiarCamposTienda();
+                        if (!nombreSucursal) { errorEl.classList.add('hidden'); return; }
+
+                        const resultados = await buscarTiendasPorNombre(nombreSucursal);
+                        tiendaMatchesActuales = resultados;
+
+                        if (resultados.length === 0) {
+                            errorEl.classList.remove('hidden');
+                        } else if (resultados.length === 1) {
+                            errorEl.classList.add('hidden');
+                            llenarCamposTienda(resultados[0]);
+                        } else {
+                            // Varias sucursales con el mismo nombre: mostrar dropdown para
+                            // que el usuario elija la exacta según ID/dirección/ciudad.
+                            errorEl.classList.add('hidden');
+                            tiendaSeleccionInput.innerHTML = '<option value="">Selecciona la sucursal exacta...</option>' +
+                                resultados.map((r, i) => `<option value="${i}">${r.Sucursal || 'Sin sucursal'} — ${r.Formato || 'Sin formato'} — ${r.Determinante || 'Sin determinante'}</option>`).join('');
+                            tiendaSeleccionWrapper.classList.remove('hidden');
+                        }
+                    });
+                }
+
+                if (tiendaSeleccionInput) {
+                    tiendaSeleccionInput.addEventListener('change', e => {
+                        const idx = e.target.value;
+                        if (idx === '') { limpiarCamposTienda(); return; }
+                        const datos = tiendaMatchesActuales[Number(idx)];
+                        if (datos) llenarCamposTienda(datos);
+                    });
+                }
+
+                form.addEventListener('submit', e => {
+                    e.preventDefault();
+                    const fd = new FormData(e.target);
+
+                    if (!fd.get('idTienda')) {
+                        alert('Busca la sucursal por nombre (y elige la exacta si aparece más de una) antes de guardar.');
+                        return;
+                    }
+
+                    // Cargar vacante nueva. El estatus inicial siempre es VIGENTE;
+                    // a partir de ahí, solo el CRM2 puede cambiarlo.
+                    const nv = {
+                        id: 'FOL' + String(state.vacancies.length + 1).padStart(4, '0'),
+                        requerimiento: fd.get('requerimiento'),
+                        vacante: fd.get('vacante'),
+                        gerenteDirector: fd.get('gerenteDirector'),
+                        idTienda: fd.get('idTienda'),
+                        estado: fd.get('estado'),
+                        ciudad: fd.get('ciudad'),
+                        cliente: fd.get('cliente'),
+                        proyecto: fd.get('proyecto'),
+                        motivoVacante: fd.get('motivoVacante'),
+                        formato: fd.get('formato'),
+                        sucursal: fd.get('sucursal'),
+                        direccionTienda: fd.get('direccionTienda'),
+                        fechaSolicitud: fd.get('fechaSolicitud'),
+                        fechaVencimiento: fd.get('fechaVencimiento'),
+                        prioridad: fd.get('prioridad'),
+                        estatusVacante: 'VIGENTE',
+                        fechaCubierta: '',
+                        usuarioCarga: state.currentUser ? state.currentUser.usuario : '',
+                        nombreCarga: state.currentUser ? state.currentUser.nombre : ''
+                    };
+                    state.vacancies.push(nv);
+                    state.showNewVacancyModal = false;
+                    render();
+
+                    // Al cargar una vacante nueva: enviar por WhatsApp y notificar al CRM2
+                    enviarWhatsAppVacante(nv);
+                    notificarCRM2Vacante(nv);
+
+                    // Refrescar desde el Sheet para tomar el ID/registro definitivo
+                    setTimeout(cargarVacantesDesdeSheet, 1500);
+                });
+            }
+        }
+
+        // Restaura la sesión guardada (si existe) para que, al recargar la página,
+        // no se vuelva a pedir el login hasta que el usuario cierre sesión.
+        (function restaurarSesion() {
+            try {
+                const guardado = localStorage.getItem('vacantes_currentUser');
+                if (guardado) {
+                    state.currentUser = JSON.parse(guardado);
+                }
+            } catch (err) {
+                console.error('Error al restaurar la sesión:', err);
+                localStorage.removeItem('vacantes_currentUser');
+            }
+        })();
+
+        render();
+
+        if (state.currentUser) {
+            cargarVacantesDesdeSheet();
+            cargarCatalogos();
+        }
+
+        setInterval(() => { if (state.currentUser) cargarVacantesDesdeSheet(); }, 30000);
+    </script>
+</body>
+</html>
