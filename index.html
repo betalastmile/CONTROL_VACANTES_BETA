@@ -207,6 +207,30 @@
             return res.json();
         }
 
+        // Estatus desde los cuales SÍ se permite cancelar una vacante.
+        // Una vez CANCELADA, no puede volver a cancelarse ni reabrirse
+        // (CANCELADA no está en ESTATUS_REAPERTURABLES).
+        const ESTATUS_NO_CANCELABLES = ['CANCELADA'];
+
+        // Pide al backend (Code.gs) que cancele la vacante: busca el folio en
+        // la hoja REGISTRO VACANTES, valida el estatus actual otra vez del
+        // lado del servidor (por seguridad) y, si aplica, cambia el estatus a
+        // CANCELADA y guarda el motivo de la cancelación.
+        async function cancelarVacanteEnSheet(id, motivoCancelacion) {
+            const res = await fetch(NOTIF_APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    accion: 'cancelar_vacante',
+                    id,
+                    motivoCancelacion,
+                    usuario: state.currentUser ? state.currentUser.usuario : '',
+                    nombreUsuario: state.currentUser ? state.currentUser.nombre : ''
+                })
+            });
+            return res.json();
+        }
+
         let state = {
             vacancies: [...mockData],
             searchTerm: '',
@@ -228,7 +252,16 @@
             reaperturaVacante: null,    // vacante encontrada, si aplica para reabrir
             reaperturaError: '',        // mensaje de error/aviso a mostrar
             reaperturaMotivo: '',
-            reaperturaLoading: false
+            reaperturaLoading: false,
+
+            // --- Flujo de Cancelación ---
+            showCancelacionModal: false,
+            cancelacionStep: 'buscar',   // 'buscar' | 'confirmar'
+            cancelacionFolio: '',
+            cancelacionVacante: null,    // vacante encontrada, si aplica para cancelar
+            cancelacionError: '',        // mensaje de error/aviso a mostrar
+            cancelacionMotivo: '',
+            cancelacionLoading: false
         };
 
         function aplicarTema() {
@@ -607,6 +640,108 @@
             }
         };
 
+        // --- Flujo de Cancelación ---
+        window.abrirCancelacion = function() {
+            state.showCancelacionModal = true;
+            state.cancelacionStep = 'buscar';
+            state.cancelacionFolio = '';
+            state.cancelacionVacante = null;
+            state.cancelacionError = '';
+            state.cancelacionMotivo = '';
+            state.cancelacionLoading = false;
+            render();
+        };
+
+        window.cerrarCancelacion = function() {
+            state.showCancelacionModal = false;
+            render();
+        };
+
+        // Vuelve a la pantalla de búsqueda de folio (por si el usuario se
+        // equivocó o quiere intentar con otro folio).
+        window.reintentarCancelacion = function() {
+            state.cancelacionStep = 'buscar';
+            state.cancelacionVacante = null;
+            state.cancelacionError = '';
+            state.cancelacionMotivo = '';
+            render();
+        };
+
+        // Busca el folio dentro de las vacantes ya cargadas (state.vacancies)
+        // y valida que su estatus permita cancelarla (que no esté ya CANCELADA).
+        window.buscarFolioCancelacion = function() {
+            const input = document.getElementById('cancelacionFolioInput');
+            const folio = (input ? input.value : '').trim();
+            state.cancelacionFolio = folio;
+
+            if (!folio) {
+                state.cancelacionError = 'Escribe un folio para buscar.';
+                render();
+                return;
+            }
+
+            const encontrada = state.vacancies.find(v => String(v.id).trim().toUpperCase() === folio.toUpperCase());
+            if (!encontrada) {
+                state.cancelacionVacante = null;
+                state.cancelacionError = `No se encontró ninguna vacante con el folio "${folio}".`;
+                render();
+                return;
+            }
+
+            const estatusActual = (encontrada.estatusVacante || '').trim().toUpperCase();
+            if (ESTATUS_NO_CANCELABLES.includes(estatusActual)) {
+                state.cancelacionVacante = null;
+                state.cancelacionError = `La vacante ${encontrada.id} ya está CANCELADA y no puede volver a cancelarse.`;
+                render();
+                return;
+            }
+
+            state.cancelacionVacante = encontrada;
+            state.cancelacionError = '';
+            state.cancelacionStep = 'confirmar';
+            render();
+        };
+
+        // Envía la cancelación al backend: cambia el estatus a CANCELADA y
+        // guarda el motivo. Una vez cancelada, la vacante ya no podrá
+        // reabrirse (CANCELADA no forma parte de ESTATUS_REAPERTURABLES).
+        window.confirmarCancelacion = async function() {
+            const textarea = document.getElementById('cancelacionMotivoInput');
+            const motivo = (textarea ? textarea.value : '').trim();
+
+            if (!motivo) {
+                state.cancelacionError = 'Escribe el motivo de la cancelación.';
+                render();
+                return;
+            }
+
+            const v = state.cancelacionVacante;
+            state.cancelacionLoading = true;
+            state.cancelacionError = '';
+            render();
+
+            try {
+                const resultado = await cancelarVacanteEnSheet(v.id, motivo);
+                if (resultado && resultado.ok) {
+                    state.showCancelacionModal = false;
+                    state.cancelacionLoading = false;
+                    render();
+                    alert(`Vacante ${v.id} cancelada correctamente. Ya no podrá reabrirse.`);
+                    cargarVacantesDesdeSheet();
+                } else {
+                    state.cancelacionLoading = false;
+                    state.cancelacionError = (resultado && resultado.mensaje) ||
+                        'No se pudo cancelar la vacante. Es posible que su estatus haya cambiado; vuelve a buscar el folio.';
+                    render();
+                }
+            } catch (err) {
+                console.error('Error al cancelar la vacante:', err);
+                state.cancelacionLoading = false;
+                state.cancelacionError = 'Error de conexión al cancelar la vacante. Intenta de nuevo.';
+                render();
+            }
+        };
+
         window.openModal = function() {
             tiendaMatchesActuales = [];
             state.showNewVacancyModal = true;
@@ -857,6 +992,9 @@
                         <button onclick="abrirReapertura()" class="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors">
                             ${icons.refresh} Reapertura
                         </button>
+                        <button onclick="abrirCancelacion()" class="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
+                            ${icons.x} Cancelar
+                        </button>
                     </div>
                 </div>
 
@@ -1043,6 +1181,65 @@
                                             ${state.reaperturaLoading ? 'Reabriendo...' : 'Confirmar Reapertura'}
                                         </button>
                                         <button onclick="reintentarReapertura()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600">Volver</button>
+                                    </div>
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${state.showCancelacionModal ? `
+                    <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+                        <div class="bg-[#1a1a1a] border border-gray-700 rounded-lg p-6 max-w-md w-full">
+                            <div class="flex justify-between items-center mb-6">
+                                <h2 class="text-white text-2xl font-bold">Cancelar Vacante</h2>
+                                <button onclick="cerrarCancelacion()" class="text-gray-400 hover:text-white">${icons.x}</button>
+                            </div>
+
+                            ${state.cancelacionStep === 'buscar' ? `
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-gray-300 text-sm mb-2">Folio de la vacante</label>
+                                        <input type="text" id="cancelacionFolioInput" value="${state.cancelacionFolio}" placeholder="Ej. FOL0012" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
+                                    </div>
+                                    ${state.cancelacionError ? `
+                                        <div class="flex items-start gap-2 ${state.theme === 'light' ? 'bg-red-50 border border-red-300 text-red-700' : 'bg-red-900/30 border border-red-800 text-red-300'} text-sm rounded-lg p-3">
+                                            <span class="mt-0.5">${icons.alertTriangle}</span>
+                                            <span>${state.cancelacionError}</span>
+                                        </div>
+                                    ` : ''}
+                                    <div class="flex gap-3 mt-2">
+                                        <button onclick="buscarFolioCancelacion()" class="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Buscar</button>
+                                        <button onclick="cerrarCancelacion()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600">Cerrar</button>
+                                    </div>
+                                </div>
+                            ` : `
+                                <div class="space-y-4">
+                                    <div class="bg-[#0a0a0a] border border-gray-700 rounded-lg p-4 space-y-1">
+                                        <p class="text-white text-sm"><span class="text-gray-400">Folio:</span> ${state.cancelacionVacante.id}</p>
+                                        <p class="text-white text-sm"><span class="text-gray-400">Vacante:</span> ${state.cancelacionVacante.vacante || ''}</p>
+                                        <p class="text-white text-sm"><span class="text-gray-400">Sucursal:</span> ${state.cancelacionVacante.sucursal || ''}</p>
+                                        <p class="text-white text-sm"><span class="text-gray-400">Estatus actual:</span> <span class="px-2 py-0.5 rounded-full text-xs ${getEstatusColor(state.cancelacionVacante.estatusVacante)}">${state.cancelacionVacante.estatusVacante}</span></p>
+                                    </div>
+                                    <div class="flex items-start gap-2 ${state.theme === 'light' ? 'bg-yellow-50 border border-yellow-300 text-yellow-800' : 'bg-yellow-900/30 border border-yellow-800 text-yellow-300'} text-sm rounded-lg p-3">
+                                        <span class="mt-0.5">${icons.alertTriangle}</span>
+                                        <span>Esta acción es permanente: una vez cancelada, la vacante no podrá reabrirse.</span>
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-300 text-sm mb-2">Motivo de la cancelación</label>
+                                        <textarea id="cancelacionMotivoInput" rows="3" placeholder="Describe por qué se cancela esta vacante..." class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">${state.cancelacionMotivo}</textarea>
+                                    </div>
+                                    ${state.cancelacionError ? `
+                                        <div class="flex items-start gap-2 ${state.theme === 'light' ? 'bg-red-50 border border-red-300 text-red-700' : 'bg-red-900/30 border border-red-800 text-red-300'} text-sm rounded-lg p-3">
+                                            <span class="mt-0.5">${icons.alertTriangle}</span>
+                                            <span>${state.cancelacionError}</span>
+                                        </div>
+                                    ` : ''}
+                                    <div class="flex gap-3 mt-2">
+                                        <button onclick="confirmarCancelacion()" ${state.cancelacionLoading ? 'disabled' : ''} class="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-60">
+                                            ${state.cancelacionLoading ? 'Cancelando...' : 'Confirmar Cancelación'}
+                                        </button>
+                                        <button onclick="reintentarCancelacion()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600">Volver</button>
                                     </div>
                                 </div>
                             `}
