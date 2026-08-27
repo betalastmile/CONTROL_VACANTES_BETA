@@ -266,13 +266,17 @@
             filterEstatusVacante: 'Todos',
             filterPrioridad: 'Todas',
             filterGerencia: 'Todas',
-            filterCard: 'total',   // 'total' | 'activas' | 'prioridadAlta' | 'cubiertas' | 'reaperturas' — filtro activo por tarjeta
+            filterCard: 'total',   // 'total' | 'activas' | 'prioridadAlta' | 'cubiertas' | 'reaperturas' | 'canceladas' — filtro activo por tarjeta
             showNewVacancyModal: false,
             currentUser: null,      // { usuario, nombre } una vez logueado
             loginError: '',
             loginLoading: false,
             catalogos: { puestos: [], motivos: [], prioridades: [], gerentes: [] },
             theme: localStorage.getItem('vacantes_theme') || 'dark',
+
+            // --- Banner de vacantes vencidas ---
+            vencidas: [],                  // [{ id, dias }] vacantes activas ya vencidas
+            bannerVencidasCerrado: false,  // el usuario cerró el banner (se reabre si aparece un folio vencido nuevo)
 
             // --- Flujo de Reapertura ---
             showReaperturaModal: false,
@@ -420,6 +424,7 @@
                 case 'prioridadAlta': return lista.filter(v => v.prioridad === 'Alta');
                 case 'cubiertas': return lista.filter(v => v.estatusVacante === 'CUBIERTA');
                 case 'reaperturas': return lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante));
+                case 'canceladas': return lista.filter(v => v.estatusVacante === 'CANCELADA');
                 default: return lista;
             }
         }
@@ -498,6 +503,44 @@
             return `<span class="px-2 py-1 rounded-full text-xs ${color}">${etiqueta}</span>`;
         }
 
+        // --- Alerta de vencimiento ---
+        // Solo importa para vacantes que siguen activas (VIGENTE / VIGENTE-REAPERTURADO);
+        // una vez CUBIERTA, CANCELADA, etc. ya no cuenta como "vencida".
+        const ESTATUS_CUENTAN_PARA_VENCIMIENTO = ['VIGENTE', 'VIGENTE-REAPERTURADO'];
+
+        function calcularDiasVencido(v) {
+            if (!v.fechaVencimiento) return null;
+            if (!ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)) return null;
+            const vencimiento = new Date(String(v.fechaVencimiento).split('T')[0] + 'T00:00:00');
+            if (isNaN(vencimiento.getTime())) return null;
+            const hoy = new Date();
+            hoy.setHours(0, 0, 0, 0);
+            const dias = Math.round((hoy - vencimiento) / (1000 * 60 * 60 * 24));
+            return dias > 0 ? dias : null;
+        }
+
+        // Recalcula qué vacantes activas ya están vencidas y actualiza
+        // state.vencidas para que el banner las muestre. Si aparece un folio
+        // vencido que no estaba antes en la lista, se reabre el banner aunque
+        // el usuario lo hubiera cerrado (para que no se pierda un aviso nuevo).
+        function actualizarVacantesVencidas() {
+            const nuevas = state.vacancies
+                .map(v => ({ id: v.id, dias: calcularDiasVencido(v) }))
+                .filter(x => x.dias !== null)
+                .sort((a, b) => b.dias - a.dias);
+
+            const idsAntes = new Set(state.vencidas.map(x => x.id));
+            const hayFolioNuevo = nuevas.some(x => !idsAntes.has(x.id));
+            if (hayFolioNuevo) state.bannerVencidasCerrado = false;
+
+            state.vencidas = nuevas;
+        }
+
+        window.cerrarBannerVencidas = function() {
+            state.bannerVencidasCerrado = true;
+            render();
+        };
+
         // Normaliza un registro proveniente del Google Sheet (columnas en PascalCase)
         // al formato interno usado por la vista.
         function normalizarVacanteDesdeSheet(row) {
@@ -533,6 +576,7 @@
                 const data = await res.json();
                 if (Array.isArray(data) && data.length) {
                     state.vacancies = data.map(normalizarVacanteDesdeSheet);
+                    actualizarVacantesVencidas();
                     // No repintar la pantalla si el usuario tiene el formulario de
                     // Nueva Vacante abierto: se perdería lo que está escribiendo.
                     // Los datos ya quedaron actualizados en el estado, y se verán
@@ -956,7 +1000,10 @@
             const conteoPrioridadAlta = baseFv.filter(v => v.prioridad === 'Alta').length;
             const conteoCubiertas = baseFv.filter(v => v.estatusVacante === 'CUBIERTA').length;
             const conteoReaperturas = baseFv.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)).length;
+            const conteoCanceladas = baseFv.filter(v => v.estatusVacante === 'CANCELADA').length;
             const claseTarjeta = (tarjeta) => `bg-[#1a1a1a] p-4 rounded-lg shadow-lg border text-left w-full transition-colors hover:border-blue-500 ${state.filterCard === tarjeta ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-800'}`;
+            const isLight = state.theme === 'light';
+            const mostrarBannerVencidas = state.vencidas.length > 0 && !state.bannerVencidasCerrado;
             // Guardamos el scroll de la tabla (vertical Y horizontal) y de la
             // ventana antes de reemplazar el HTML, porque al recrear el
             // contenedor el navegador lo monta con scrollTop/scrollLeft = 0
@@ -982,7 +1029,28 @@
                     </div>
                 </div>
 
-                <div class="mb-6 grid grid-cols-1 md:grid-cols-5 gap-4">
+                ${mostrarBannerVencidas ? `
+                <div class="mb-6 rounded-lg border p-4 ${isLight ? 'bg-red-50 border-red-300' : 'bg-red-950/40 border-red-800'}">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex items-start gap-3">
+                            <span class="mt-0.5 ${isLight ? 'text-red-600' : 'text-red-400'}">${icons.alertTriangle}</span>
+                            <div>
+                                <p class="text-sm font-semibold mb-1 ${isLight ? 'text-red-800' : 'text-red-300'}">
+                                    ${state.vencidas.length} vacante${state.vencidas.length === 1 ? '' : 's'} vencida${state.vencidas.length === 1 ? '' : 's'}
+                                </p>
+                                <ul class="text-sm space-y-0.5 ${isLight ? 'text-red-700' : 'text-red-300'}">
+                                    ${state.vencidas.map(x => `<li>Folio ${x.id} — ${x.dias} día${x.dias === 1 ? '' : 's'} vencida</li>`).join('')}
+                                </ul>
+                            </div>
+                        </div>
+                        <button type="button" onclick="cerrarBannerVencidas()" title="Cerrar aviso" class="shrink-0 ${isLight ? 'text-red-600 hover:text-red-800' : 'text-red-400 hover:text-red-200'}">
+                            ${icons.x.replace('width="24"', 'width="18"').replace('height="24"', 'height="18"')}
+                        </button>
+                    </div>
+                </div>
+                ` : ''}
+
+                <div class="mb-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                     <button type="button" onclick="filtrarPorTarjeta('total')" class="${claseTarjeta('total')}">
                         <p class="text-gray-400 text-sm">Total de Vacantes</p>
                         <p class="text-white text-2xl font-bold mt-1">${baseFv.length}</p>
@@ -1002,6 +1070,10 @@
                     <button type="button" onclick="filtrarPorTarjeta('reaperturas')" class="${claseTarjeta('reaperturas')}">
                         <p class="text-gray-400 text-sm">Reaperturas</p>
                         <p class="text-white text-2xl font-bold mt-1">${conteoReaperturas}</p>
+                    </button>
+                    <button type="button" onclick="filtrarPorTarjeta('canceladas')" class="${claseTarjeta('canceladas')}">
+                        <p class="text-gray-400 text-sm">Canceladas</p>
+                        <p class="text-white text-2xl font-bold mt-1">${conteoCanceladas}</p>
                     </button>
                 </div>
 
