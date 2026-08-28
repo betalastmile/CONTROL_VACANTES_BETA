@@ -479,9 +479,11 @@
         // (o hasta hoy, si aún no se cubre). El estatus lo controla el CRM2.
         function calcularDiasProceso(v) {
             if (!v.fechaSolicitud) return null;
-            const inicio = new Date(v.fechaSolicitud + 'T00:00:00');
+            const soloFechaInicio = String(v.fechaSolicitud).split('T')[0];
+            const inicio = new Date(soloFechaInicio + 'T00:00:00');
             const esCubierta = v.estatusVacante === 'CUBIERTA';
-            const fin = (esCubierta && v.fechaCubierta) ? new Date(v.fechaCubierta + 'T00:00:00') : new Date();
+            const soloFechaFin = (esCubierta && v.fechaCubierta) ? String(v.fechaCubierta).split('T')[0] : null;
+            const fin = soloFechaFin ? new Date(soloFechaFin + 'T00:00:00') : new Date();
             const dias = Math.max(0, Math.round((fin - inicio) / (1000 * 60 * 60 * 24)));
             return dias;
         }
