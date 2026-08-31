@@ -266,7 +266,7 @@
             filterEstatusVacante: 'Todos',
             filterPrioridad: 'Todas',
             filterGerencia: 'Todas',
-            filterCard: 'total',   // 'total' | 'activas' | 'prioridadAlta' | 'cubiertas' | 'reaperturas' | 'canceladas' — filtro activo por tarjeta
+            filterCard: 'total',   // 'total' | 'activas' | 'prioridadAlta' | 'cubiertas' | 'reaperturas' | 'canceladas' | 'vencidas' — filtro activo por tarjeta
             showNewVacancyModal: false,
             currentUser: null,      // { usuario, nombre } una vez logueado
             loginError: '',
@@ -425,6 +425,10 @@
                 case 'cubiertas': return lista.filter(v => v.estatusVacante === 'CUBIERTA');
                 case 'reaperturas': return lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante));
                 case 'canceladas': return lista.filter(v => v.estatusVacante === 'CANCELADA');
+                case 'vencidas': {
+                    const idsVencidas = new Set(state.vencidas.map(x => x.id));
+                    return lista.filter(v => idsVencidas.has(v.id));
+                }
                 default: return lista;
             }
         }
@@ -1037,9 +1041,9 @@
                         <div class="flex items-start gap-3">
                             <span class="mt-0.5 ${isLight ? 'text-red-600' : 'text-red-400'}">${icons.alertTriangle}</span>
                             <div>
-                                <p class="text-sm font-semibold mb-1 ${isLight ? 'text-red-800' : 'text-red-300'}">
-                                    ${state.vencidas.length} vacante${state.vencidas.length === 1 ? '' : 's'} vencida${state.vencidas.length === 1 ? '' : 's'}
-                                </p>
+                                <button type="button" onclick="filtrarPorTarjeta('vencidas')" class="text-left hover:underline text-sm font-semibold mb-1 ${isLight ? 'text-red-800' : 'text-red-300'}">
+                                    ${state.vencidas.length} vacante${state.vencidas.length === 1 ? '' : 's'} vencida${state.vencidas.length === 1 ? '' : 's'}${state.filterCard === 'vencidas' ? ' (filtrando)' : ''}
+                                </button>
                                 <ul class="text-sm space-y-0.5 ${isLight ? 'text-red-700' : 'text-red-300'}">
                                     ${state.vencidas.map(x => `<li>Folio ${x.id} — ${x.dias} día${x.dias === 1 ? '' : 's'} vencida</li>`).join('')}
                                 </ul>
