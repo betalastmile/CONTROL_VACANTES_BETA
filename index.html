@@ -6,6 +6,8 @@
     <title>Reporte de Vacantes</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
     <style>
         /* --- Tema claro: sobreescribe los colores oscuros cuando body tiene .light-theme --- */
         body.light-theme { background-color: #f3f4f6 !important; }
@@ -260,8 +262,19 @@
             return res.json();
         }
 
+        // Instancias de Chart.js del dashboard, para poder destruirlas antes de
+        // volver a dibujarlas cada vez que render() reemplaza el HTML (evita
+        // fugas de memoria y el error "Canvas is already in use").
+        let dashboardCharts = {};
+        function destruirGraficasDashboard() {
+            Object.values(dashboardCharts).forEach(c => { if (c) c.destroy(); });
+            dashboardCharts = {};
+        }
+
         let state = {
             vacancies: [...mockData],
+            view: 'vacantes',   // 'vacantes' | 'dashboard'
+            dashboardFiltro: null,   // { campo, valor } — filtro cruzado activado al hacer clic en una gráfica del dashboard
             searchTerm: '',
             filterEstatusVacante: 'Todos',
             filterPrioridad: 'Todas',
@@ -546,6 +559,356 @@
             state.bannerVencidasCerrado = true;
             render();
         };
+
+        // ============================================================
+        // ---------------------- DASHBOARD --------------------------
+        // ============================================================
+
+        window.cambiarVista = function(vista) {
+            state.view = vista;
+            render();
+        };
+
+        const NOMBRES_MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+        // Convierte una clave 'YYYY-MM' en una etiqueta corta 'Ene 26'.
+        function etiquetaMes(claveAnioMes) {
+            const [anio, mes] = claveAnioMes.split('-');
+            const idx = parseInt(mes, 10) - 1;
+            return `${NOMBRES_MES[idx] || mes} ${anio.slice(2)}`;
+        }
+
+        // Agrupa vacantes por mes (YYYY-MM) según el campo de fecha indicado,
+        // devolviendo un mapa { 'YYYY-MM': conteo }. Ignora vacantes sin esa fecha.
+        function agruparPorMes(vacantes, campoFecha) {
+            const mapa = {};
+            vacantes.forEach(v => {
+                const f = v[campoFecha];
+                if (!f) return;
+                const soloFecha = String(f).split('T')[0];
+                const partes = soloFecha.split('-');
+                if (partes.length !== 3) return;
+                const clave = `${partes[0]}-${partes[1]}`;
+                mapa[clave] = (mapa[clave] || 0) + 1;
+            });
+            return mapa;
+        }
+
+        // Devuelve los últimos N meses (claves 'YYYY-MM' en orden ascendente)
+        // que aparezcan en cualquiera de los mapas de agrupación dados, para
+        // que las tendencias compartan el mismo eje de tiempo.
+        function ultimosMesesClaves(mapas, n = 8) {
+            const set = new Set();
+            mapas.forEach(m => Object.keys(m).forEach(k => set.add(k)));
+            return Array.from(set).sort().slice(-n);
+        }
+
+        // Normaliza el valor de un campo (ciudad, cliente, estatus, etc.) de una
+        // vacante, para que el conteo de gráficas y el filtro por clic usen
+        // exactamente el mismo criterio (incluyendo el caso "Sin dato").
+        function valorNormalizado(v, campo) {
+            const val = (v[campo] || '').toString().trim();
+            return val || 'Sin dato';
+        }
+
+        // Cuenta ocurrencias de un campo (ej. ciudad, cliente, gerenteDirector)
+        // y devuelve las N combinaciones más frecuentes, ordenadas descendente.
+        function topPorCampo(vacantes, campo, n = 8) {
+            const mapa = {};
+            vacantes.forEach(v => {
+                const val = valorNormalizado(v, campo);
+                mapa[val] = (mapa[val] || 0) + 1;
+            });
+            return Object.entries(mapa).sort((a, b) => b[1] - a[1]).slice(0, n);
+        }
+
+        // Nombres legibles de los campos que se pueden usar como filtro cruzado
+        // del dashboard (al hacer clic en una gráfica).
+        const NOMBRES_CAMPO_DASHBOARD = {
+            estatusVacante: 'Estatus',
+            prioridad: 'Prioridad',
+            ciudad: 'Ciudad',
+            cliente: 'Cliente',
+            gerenteDirector: 'Gerente/Director'
+        };
+
+        // Activa/desactiva el filtro cruzado del dashboard. Si ya estaba activo
+        // ese mismo campo+valor (clic de nuevo sobre lo mismo), lo quita.
+        window.filtrarDashboardPor = function(campo, valor) {
+            const f = state.dashboardFiltro;
+            state.dashboardFiltro = (f && f.campo === campo && f.valor === valor) ? null : { campo, valor };
+            render();
+        };
+
+        window.quitarFiltroDashboard = function() {
+            state.dashboardFiltro = null;
+            render();
+        };
+
+        // Aplica el filtro cruzado (si hay alguno activo) sobre una lista de vacantes.
+        function aplicarFiltroDashboard(lista) {
+            if (!state.dashboardFiltro) return lista;
+            const { campo, valor } = state.dashboardFiltro;
+            return lista.filter(v => valorNormalizado(v, campo) === valor);
+        }
+
+        // Promedio de días en proceso, solo de vacantes ya CUBIERTAS (tiempo real de cobertura).
+        function promedioDiasCobertura(vacantes) {
+            const cubiertas = vacantes.filter(v => v.estatusVacante === 'CUBIERTA');
+            const dias = cubiertas.map(calcularDiasProceso).filter(d => d !== null);
+            if (!dias.length) return null;
+            return Math.round(dias.reduce((a, b) => a + b, 0) / dias.length);
+        }
+
+        // Paleta consistente para las gráficas (coincide con el verde/azul de marca).
+        const PALETA_GRAFICAS = ['#3B82F6', '#8CC63F', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#EC4899', '#64748B'];
+
+        function coloresTema() {
+            const isLight = state.theme === 'light';
+            return {
+                texto: isLight ? '#374151' : '#d1d5db',
+                rejilla: isLight ? '#e5e7eb' : '#2a2a2a'
+            };
+        }
+
+        function opcionesBaseChart(extra = {}) {
+            const { texto, rejilla } = coloresTema();
+            return {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: texto } },
+                    ...(extra.plugins || {})
+                },
+                scales: extra.scales || {
+                    x: { ticks: { color: texto }, grid: { color: rejilla } },
+                    y: { ticks: { color: texto }, grid: { color: rejilla }, beginAtZero: true }
+                }
+            };
+        }
+
+        // Arma todo el HTML del dashboard (tarjetas de % + contenedores <canvas>).
+        // Los <canvas> se llenan después, en dibujarGraficasDashboard(), una vez
+        // que el HTML ya está insertado en el DOM.
+        function renderDashboardHTML(vacantes) {
+            const total = vacantes.length;
+            const pct = (n) => total ? Math.round((n / total) * 100) : 0;
+            const nCubiertas = vacantes.filter(v => v.estatusVacante === 'CUBIERTA').length;
+            const nVigentes = vacantes.filter(v => ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)).length;
+            const nCanceladas = vacantes.filter(v => v.estatusVacante === 'CANCELADA').length;
+            const nReaperturas = vacantes.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)).length;
+            const diasCobertura = promedioDiasCobertura(vacantes);
+            const isLight = state.theme === 'light';
+            const tarjeta = isLight ? 'bg-white border-gray-200' : 'bg-[#1a1a1a] border-gray-800';
+            const cont = isLight ? 'bg-white border-gray-200' : 'bg-[#1a1a1a] border-gray-800';
+
+            const kpi = (titulo, valor, sub) => `
+                <div class="${tarjeta} p-4 rounded-lg shadow-lg border">
+                    <p class="text-gray-400 text-sm">${titulo}</p>
+                    <p class="text-white text-3xl font-bold mt-1">${valor}</p>
+                    ${sub ? `<p class="text-gray-500 text-xs mt-1">${sub}</p>` : ''}
+                </div>`;
+
+            const f = state.dashboardFiltro;
+            const badgeFiltro = f ? `
+                <div class="mb-4 flex items-center gap-2 text-sm">
+                    <span class="text-gray-400">Filtro activo:</span>
+                    <span class="px-3 py-1 rounded-full bg-blue-600 text-white flex items-center gap-2">
+                        ${NOMBRES_CAMPO_DASHBOARD[f.campo] || f.campo}: ${f.valor}
+                        <button type="button" onclick="quitarFiltroDashboard()" class="hover:text-gray-200" title="Quitar filtro">${icons.x.replace('width="24"', 'width="14"').replace('height="24"', 'height="14"')}</button>
+                    </span>
+                    <span class="text-gray-500 text-xs">Haz clic en una barra o segmento de las gráficas para filtrar todo el dashboard.</span>
+                </div>
+            ` : `
+                <div class="mb-4 text-xs text-gray-500">Tip: haz clic en una barra o segmento (estatus, prioridad, ciudad, cliente, gerente) para filtrar todo el dashboard por ese dato. Haz clic de nuevo para quitarlo.</div>
+            `;
+
+            return `
+                ${badgeFiltro}
+                <div id="avisoChartCdn" class="hidden mb-4 rounded-lg border p-3 text-sm ${isLight ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-amber-950/40 border-amber-800 text-amber-300'}">
+                    No se pudieron cargar las gráficas (la librería Chart.js no se descargó). Verifica tu conexión a internet o si tu red bloquea cdn.jsdelivr.net; los porcentajes de arriba sí son correctos aunque las gráficas no se dibujen.
+                </div>
+                <div class="mb-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                    ${kpi('Total de Vacantes', total)}
+                    ${kpi('% Cubiertas', `${pct(nCubiertas)}%`, `${nCubiertas} vacantes`)}
+                    ${kpi('% Vigentes', `${pct(nVigentes)}%`, `${nVigentes} vacantes`)}
+                    ${kpi('% Canceladas', `${pct(nCanceladas)}%`, `${nCanceladas} vacantes`)}
+                    ${kpi('% Reaperturas', `${pct(nReaperturas)}%`, `${nReaperturas} vacantes`)}
+                    ${kpi('Días Prom. de Cobertura', diasCobertura !== null ? diasCobertura : '—', diasCobertura !== null ? 'solo vacantes cubiertas' : 'sin datos aún')}
+                </div>
+
+                <div class="mb-6 grid grid-cols-1 lg:grid-cols-1 gap-4">
+                    <div class="${cont} p-4 rounded-lg shadow-lg border">
+                        <p class="text-white font-semibold mb-3">Tendencia mensual: Nuevas vs Cubiertas vs Canceladas</p>
+                        <div style="height:300px"><canvas id="chartTendencia"></canvas></div>
+                    </div>
+                </div>
+
+                <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="${cont} p-4 rounded-lg shadow-lg border">
+                        <p class="text-white font-semibold mb-3">Distribución por Estatus</p>
+                        <div style="height:280px"><canvas id="chartEstatus"></canvas></div>
+                    </div>
+                    <div class="${cont} p-4 rounded-lg shadow-lg border">
+                        <p class="text-white font-semibold mb-3">Distribución por Prioridad</p>
+                        <div style="height:280px"><canvas id="chartPrioridad"></canvas></div>
+                    </div>
+                </div>
+
+                <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="${cont} p-4 rounded-lg shadow-lg border">
+                        <p class="text-white font-semibold mb-3">Vacantes por Ciudad (top 8)</p>
+                        <div style="height:300px"><canvas id="chartCiudad"></canvas></div>
+                    </div>
+                    <div class="${cont} p-4 rounded-lg shadow-lg border">
+                        <p class="text-white font-semibold mb-3">Vacantes por Cliente (top 8)</p>
+                        <div style="height:300px"><canvas id="chartCliente"></canvas></div>
+                    </div>
+                </div>
+
+                <div class="mb-6 grid grid-cols-1 gap-4">
+                    <div class="${cont} p-4 rounded-lg shadow-lg border">
+                        <p class="text-white font-semibold mb-3">Vacantes por Gerente Operativo/Director (top 8)</p>
+                        <div style="height:320px"><canvas id="chartGerente"></canvas></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Dibuja las gráficas de Chart.js dentro de los <canvas> ya insertados
+        // en el DOM. Debe llamarse después de document.getElementById('app').innerHTML = ...
+        // Formatter genérico de etiquetas "N (P%)" para un dataset de un solo
+        // grupo (doughnut o barra de una sola serie), usando el total de ese
+        // mismo dataset como base del porcentaje.
+        function formatterConteoPct(value, ctx) {
+            if (!value) return '';
+            const total = (ctx.dataset.data || []).reduce((a, b) => a + b, 0);
+            const pct = total ? Math.round((value / total) * 100) : 0;
+            return `${value} (${pct}%)`;
+        }
+
+        // Config compartida del plugin datalabels para gráficas de dona/barra:
+        // texto blanco con contorno oscuro para que se lea sobre cualquier color.
+        const DATALABELS_CONTEO = {
+            display: true,
+            color: '#fff',
+            font: { weight: 'bold', size: 11 },
+            textStrokeColor: 'rgba(0,0,0,0.65)',
+            textStrokeWidth: 3,
+            formatter: formatterConteoPct
+        };
+
+        // Maneja el clic sobre un elemento (barra/segmento) de una gráfica
+        // categórica y activa/desactiva el filtro cruzado del dashboard.
+        function alHacerClicEnGrafica(campo) {
+            return function(event, elements, chart) {
+                if (!elements.length) return;
+                const idx = elements[0].index;
+                const valor = chart.data.labels[idx];
+                filtrarDashboardPor(campo, valor);
+            };
+        }
+
+        function dibujarGraficasDashboard(vacantes) {
+            destruirGraficasDashboard();
+            const avisoCdn = document.getElementById('avisoChartCdn');
+            if (typeof Chart === 'undefined') {
+                // La librería de gráficas no cargó (sin internet o el CDN está bloqueado).
+                if (avisoCdn) avisoCdn.classList.remove('hidden');
+                return;
+            }
+            if (avisoCdn) avisoCdn.classList.add('hidden');
+            if (typeof ChartDataLabels !== 'undefined') Chart.register(ChartDataLabels);
+
+            // --- Tendencia mensual ---
+            const porMesNuevas = agruparPorMes(vacantes, 'fechaSolicitud');
+            const porMesCubiertas = agruparPorMes(vacantes.filter(v => v.estatusVacante === 'CUBIERTA'), 'fechaCubierta');
+            const porMesCanceladas = agruparPorMes(vacantes.filter(v => v.estatusVacante === 'CANCELADA'), 'fechaSolicitud');
+            const clavesMeses = ultimosMesesClaves([porMesNuevas, porMesCubiertas, porMesCanceladas], 8);
+            const ctxTendencia = document.getElementById('chartTendencia');
+            if (ctxTendencia && clavesMeses.length) {
+                const dlTendencia = (color) => ({
+                    display: true, color, font: { weight: 'bold', size: 10 }, align: 'top', anchor: 'end',
+                    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4, padding: 3,
+                    formatter: v => (v ? v : '')
+                });
+                dashboardCharts.tendencia = new Chart(ctxTendencia, {
+                    type: 'line',
+                    data: {
+                        labels: clavesMeses.map(etiquetaMes),
+                        datasets: [
+                            { label: 'Nuevas', data: clavesMeses.map(k => porMesNuevas[k] || 0), borderColor: PALETA_GRAFICAS[0], backgroundColor: PALETA_GRAFICAS[0] + '33', tension: 0.3, fill: true, datalabels: dlTendencia(PALETA_GRAFICAS[0]) },
+                            { label: 'Cubiertas', data: clavesMeses.map(k => porMesCubiertas[k] || 0), borderColor: PALETA_GRAFICAS[1], backgroundColor: PALETA_GRAFICAS[1] + '33', tension: 0.3, fill: true, datalabels: dlTendencia(PALETA_GRAFICAS[1]) },
+                            { label: 'Canceladas', data: clavesMeses.map(k => porMesCanceladas[k] || 0), borderColor: PALETA_GRAFICAS[3], backgroundColor: PALETA_GRAFICAS[3] + '33', tension: 0.3, fill: true, datalabels: dlTendencia(PALETA_GRAFICAS[3]) }
+                        ]
+                    },
+                    options: opcionesBaseChart()
+                    // Nota: la tendencia es por mes, no por categoría, así que no
+                    // tiene filtro por clic (no hay un solo "valor" que filtrar).
+                });
+            }
+
+            // --- Distribución por estatus ---
+            const porEstatus = topPorCampo(vacantes, 'estatusVacante', 12);
+            const ctxEstatus = document.getElementById('chartEstatus');
+            if (ctxEstatus && porEstatus.length) {
+                dashboardCharts.estatus = new Chart(ctxEstatus, {
+                    type: 'doughnut',
+                    data: {
+                        labels: porEstatus.map(x => x[0]),
+                        datasets: [{ data: porEstatus.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
+                    },
+                    options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('estatusVacante'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                });
+            }
+
+            // --- Distribución por prioridad ---
+            const porPrioridad = topPorCampo(vacantes, 'prioridad', 5);
+            const ctxPrioridad = document.getElementById('chartPrioridad');
+            if (ctxPrioridad && porPrioridad.length) {
+                dashboardCharts.prioridad = new Chart(ctxPrioridad, {
+                    type: 'doughnut',
+                    data: {
+                        labels: porPrioridad.map(x => x[0]),
+                        datasets: [{ data: porPrioridad.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
+                    },
+                    options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('prioridad'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                });
+            }
+
+            // --- Por ciudad ---
+            const porCiudad = topPorCampo(vacantes, 'ciudad', 8);
+            const ctxCiudad = document.getElementById('chartCiudad');
+            if (ctxCiudad && porCiudad.length) {
+                dashboardCharts.ciudad = new Chart(ctxCiudad, {
+                    type: 'bar',
+                    data: { labels: porCiudad.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porCiudad.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[0], datalabels: DATALABELS_CONTEO }] },
+                    options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('ciudad'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                });
+            }
+
+            // --- Por cliente ---
+            const porCliente = topPorCampo(vacantes, 'cliente', 8);
+            const ctxCliente = document.getElementById('chartCliente');
+            if (ctxCliente && porCliente.length) {
+                dashboardCharts.cliente = new Chart(ctxCliente, {
+                    type: 'bar',
+                    data: { labels: porCliente.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porCliente.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[1], datalabels: DATALABELS_CONTEO }] },
+                    options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('cliente'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                });
+            }
+
+            // --- Por gerente/director ---
+            const porGerente = topPorCampo(vacantes, 'gerenteDirector', 8);
+            const ctxGerente = document.getElementById('chartGerente');
+            if (ctxGerente && porGerente.length) {
+                dashboardCharts.gerente = new Chart(ctxGerente, {
+                    type: 'bar',
+                    data: { labels: porGerente.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porGerente.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[2], datalabels: DATALABELS_CONTEO }] },
+                    options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('gerenteDirector'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                });
+            }
+        }
 
         // Normaliza un registro proveniente del Google Sheet (columnas en PascalCase)
         // al formato interno usado por la vista.
@@ -1025,6 +1388,10 @@
                         <p class="text-gray-400">Gestión y seguimiento de requisiciones de personal</p>
                     </div>
                     <div class="flex items-center gap-4">
+                        <div class="flex bg-[#1a1a1a] border border-gray-800 rounded-lg overflow-hidden">
+                            <button onclick="cambiarVista('vacantes')" class="px-4 py-2 text-sm transition-colors ${state.view === 'vacantes' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}">Vacantes</button>
+                            <button onclick="cambiarVista('dashboard')" class="px-4 py-2 text-sm transition-colors ${state.view === 'dashboard' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}">Dashboard</button>
+                        </div>
                         <button onclick="toggleTheme()" title="Cambiar tema" class="p-2 text-gray-400 hover:text-white bg-[#1a1a1a] border border-gray-800 rounded-lg">
                             ${state.theme === 'dark' ? icons.sun : icons.moon}
                         </button>
@@ -1056,6 +1423,7 @@
                 </div>
                 ` : ''}
 
+                ${state.view === 'dashboard' ? renderDashboardHTML(aplicarFiltroDashboard(baseFv)) : `
                 <div class="mb-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                     <button type="button" onclick="filtrarPorTarjeta('total')" class="${claseTarjeta('total')}">
                         <p class="text-gray-400 text-sm">Total de Vacantes</p>
@@ -1192,6 +1560,7 @@
                     </div>
                     ${fv.length === 0 ? '<div class="text-center py-12"><p class="text-gray-500">No se encontraron vacantes</p></div>' : ''}
                 </div>
+                `}
 
                 ${state.showNewVacancyModal ? `
                     <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
@@ -1379,15 +1748,33 @@
                 ` : ''}
             `;
 
-            document.getElementById('searchInput').value = state.searchTerm;
-            document.getElementById('filterEstatusVacante').value = state.filterEstatusVacante;
-            document.getElementById('filterPrioridad').value = state.filterPrioridad;
-            document.getElementById('filterGerencia').value = state.filterGerencia;
+            // El dashboard no tiene estos campos de búsqueda/filtro, así que se
+            // configuran solo cuando existen (vista 'vacantes').
+            const elBusqueda = document.getElementById('searchInput');
+            const elFiltroEstatus = document.getElementById('filterEstatusVacante');
+            const elFiltroPrioridad = document.getElementById('filterPrioridad');
+            const elFiltroGerencia = document.getElementById('filterGerencia');
+            if (elBusqueda) {
+                elBusqueda.value = state.searchTerm;
+                elBusqueda.addEventListener('input', e => { state.searchTerm = e.target.value; render(); });
+            }
+            if (elFiltroEstatus) {
+                elFiltroEstatus.value = state.filterEstatusVacante;
+                elFiltroEstatus.addEventListener('change', e => { state.filterEstatusVacante = e.target.value; render(); });
+            }
+            if (elFiltroPrioridad) {
+                elFiltroPrioridad.value = state.filterPrioridad;
+                elFiltroPrioridad.addEventListener('change', e => { state.filterPrioridad = e.target.value; render(); });
+            }
+            if (elFiltroGerencia) {
+                elFiltroGerencia.value = state.filterGerencia;
+                elFiltroGerencia.addEventListener('change', e => { state.filterGerencia = e.target.value; render(); });
+            }
 
-            document.getElementById('searchInput').addEventListener('input', e => { state.searchTerm = e.target.value; render(); });
-            document.getElementById('filterEstatusVacante').addEventListener('change', e => { state.filterEstatusVacante = e.target.value; render(); });
-            document.getElementById('filterPrioridad').addEventListener('change', e => { state.filterPrioridad = e.target.value; render(); });
-            document.getElementById('filterGerencia').addEventListener('change', e => { state.filterGerencia = e.target.value; render(); });
+            // Dibuja las gráficas del dashboard (solo si esa vista está activa).
+            if (state.view === 'dashboard') {
+                dibujarGraficasDashboard(aplicarFiltroDashboard(baseFv));
+            }
 
             // Restauramos el scroll de la tabla y de la ventana que
             // guardamos antes de repintar, para que un refresco automático
