@@ -891,8 +891,8 @@
                             <div style="height:300px"><canvas id="chartTienda"></canvas></div>
                         </div>
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
-                            <p class="text-white font-semibold mb-3">Vacantes por Proyecto (top 8)</p>
-                            <div style="height:300px"><canvas id="chartProyecto"></canvas></div>
+                            <p class="text-white font-semibold mb-3">Vacantes por Formato (top 8)</p>
+                            <div style="height:300px"><canvas id="chartFormato"></canvas></div>
                         </div>
                     </div>
 
@@ -1047,14 +1047,14 @@
                     });
                 }
 
-                // --- Por proyecto ---
-                const porProyecto = topPorCampo(vacantes, 'proyecto', 8);
-                const ctxProyecto = document.getElementById('chartProyecto');
-                if (ctxProyecto && porProyecto.length) {
-                    dashboardCharts.proyecto = new Chart(ctxProyecto, {
+                // --- Por formato ---
+                const porFormato = topPorCampo(vacantes, 'formato', 8);
+                const ctxFormato = document.getElementById('chartFormato');
+                if (ctxFormato && porFormato.length) {
+                    dashboardCharts.formato = new Chart(ctxFormato, {
                         type: 'bar',
-                        data: { labels: porProyecto.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porProyecto.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[5], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('proyecto'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                        data: { labels: porFormato.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porFormato.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[5], datalabels: DATALABELS_CONTEO }] },
+                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('formato'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
                     });
                 }
 
