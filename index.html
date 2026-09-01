@@ -137,9 +137,12 @@
                     `Dirección de tienda: ${v.direccionTienda || ''}\n` +
                     `Formato: ${v.formato}\n` +
                     `Prioridad: ${v.prioridad}\n` +
+                    `¿Viática?: ${v.viatica || ''}\n` +
                     `Estatus: ${v.estatusVacante}\n` +
                     `Fecha de solicitud: ${v.fechaSolicitud}\n` +
-                    `Fecha de vencimiento: ${v.fechaVencimiento}\n` +
+                    `Fecha límite de contratación: ${v.fechaVencimiento}\n` +
+                    `¿Vacante Referida?: ${v.vacanteReferida || ''}` +
+                    `${v.vacanteReferida === 'Sí' ? `\nReferido: ${v.referidoNombre || ''} — ${v.referidoTelefono || ''}` : ''}\n` +
                     `Observaciones Adicionales: ${v.requerimiento}`;
                 // Se abre WhatsApp sin número predefinido para que el usuario elija a quién enviarlo
                 window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
@@ -310,6 +313,8 @@
                 // --- Banner de vacantes vencidas ---
                 vencidas: [],                  // [{ id, dias }] vacantes activas ya vencidas
                 bannerVencidasCerrado: false,  // el usuario cerró el banner (se reabre si aparece un folio vencido nuevo)
+                noCubrirAlta: [],              // folios Alta con 3+ días sin cubrir (ver actualizarPrioridadesEfectivas)
+                bannerNoCubrirCerrado: false,  // el usuario cerró el banner de "por no cubrir" (se reabre si aparece un folio nuevo)
 
                 // --- Flujo de Reapertura ---
                 showReaperturaModal: false,
@@ -442,7 +447,7 @@
                 return state.vacancies.filter(v => {
                     const match = v.gerenteDirector.toLowerCase().includes(state.searchTerm.toLowerCase()) || v.cliente.toLowerCase().includes(state.searchTerm.toLowerCase());
                     const matchE = state.filterEstatusVacante === 'Todos' || v.estatusVacante === state.filterEstatusVacante;
-                    const matchP = state.filterPrioridad === 'Todas' || v.prioridad === state.filterPrioridad;
+                    const matchP = state.filterPrioridad === 'Todas' || (v.prioridadEfectiva || v.prioridad) === state.filterPrioridad;
                     const matchG = state.filterGerencia === 'Todas' || v.gerenteDirector === state.filterGerencia;
                     return match && matchE && matchP && matchG;
                 });
@@ -456,7 +461,8 @@
             function aplicarFiltroTarjeta(lista) {
                 switch (state.filterCard) {
                     case 'activas': return lista.filter(v => v.estado === 'Activo');
-                    case 'prioridadAlta': return lista.filter(v => v.prioridad === 'Alta');
+                    case 'vigentes': return lista.filter(v => ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante));
+                    case 'prioridadAlta': return lista.filter(v => (v.prioridadEfectiva || v.prioridad) === 'Alta');
                     case 'cubiertas': return lista.filter(v => v.estatusVacante === 'CUBIERTA');
                     case 'reaperturas': return lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante));
                     case 'canceladas': return lista.filter(v => v.estatusVacante === 'CANCELADA');
@@ -499,7 +505,7 @@
                     'SUCURSAL': v.sucursal,
                     'DIRECCIÓN DE TIENDA': v.direccionTienda || '',
                     'FECHA DE SOLICITUD': fechaCorta(v.fechaSolicitud),
-                    'FECHA DE VENCIMIENTO': fechaCorta(v.fechaVencimiento),
+                    'FECHA LÍMITE CONTRATACIÓN': fechaCorta(v.fechaVencimiento),
                     'PRIORIDAD': v.prioridad,
                     'ESTATUS VACANTE': v.estatusVacante,
                     'DÍAS EN PROCESO': calcularDiasProceso(v) !== null ? calcularDiasProceso(v) : '',
@@ -579,6 +585,71 @@
 
             window.cerrarBannerVencidas = function() {
                 state.bannerVencidasCerrado = true;
+                render();
+            };
+
+            // --- Escalación automática de prioridad ---
+            // Solo aplica a vacantes que siguen vigentes (VIGENTE / VIGENTE-REAPERTURADO).
+            // No modifica v.prioridad (el valor capturado/guardado en Sheets); calcula
+            // un valor "efectivo" que es el que se muestra en insignias, filtros y gráficas.
+            //   - Baja (deadline 1 mes):   día 15 -> Media | 1 semana antes del mes (día 23) -> Alta
+            //   - Media/Quincenal (15 días): 1 semana (día 7) -> Alta
+            //   - Alta (7 días): no escala más; a partir del día 3 se marca como
+            //     "vacante por no cubrir" (alerta aparte, no cambia el texto de prioridad).
+            function diasTranscurridosSolicitud(v) {
+                if (!v.fechaSolicitud) return null;
+                const solicitud = new Date(String(v.fechaSolicitud).split('T')[0] + 'T00:00:00');
+                if (isNaN(solicitud.getTime())) return null;
+                const hoy = new Date();
+                hoy.setHours(0, 0, 0, 0);
+                return Math.floor((hoy - solicitud) / (1000 * 60 * 60 * 24));
+            }
+
+            function calcularPrioridadEfectiva(v) {
+                const original = (v.prioridad || 'Media').trim();
+                if (!ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)) return original;
+                const dias = diasTranscurridosSolicitud(v);
+                if (dias === null) return original;
+                const clave = original.toLowerCase();
+                if (clave === 'baja') {
+                    if (dias >= 23) return 'Alta';
+                    if (dias >= 15) return 'Media';
+                    return original;
+                }
+                if (clave === 'media' || clave === 'quincenal') {
+                    if (dias >= 7) return 'Alta';
+                    return original;
+                }
+                return original;
+            }
+
+            // Marca las vacantes Alta con 3+ días desde su solicitud, que sigan vigentes,
+            // como "por no cubrir" para el banner de alerta.
+            function requiereAlertaNoCubrir(v) {
+                if (!ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)) return false;
+                if ((v.prioridad || '').trim().toLowerCase() !== 'alta') return false;
+                const dias = diasTranscurridosSolicitud(v);
+                return dias !== null && dias >= 3;
+            }
+
+            // Recalcula prioridadEfectiva para todas las vacantes en memoria y arma
+            // la lista de folios Alta "por no cubrir" (state.noCubrirAlta).
+            function actualizarPrioridadesEfectivas() {
+                state.vacancies.forEach(v => { v.prioridadEfectiva = calcularPrioridadEfectiva(v); });
+                const nuevas = state.vacancies
+                    .filter(requiereAlertaNoCubrir)
+                    .map(v => ({ id: v.id, dias: diasTranscurridosSolicitud(v) }))
+                    .sort((a, b) => b.dias - a.dias);
+
+                const idsAntes = new Set((state.noCubrirAlta || []).map(x => x.id));
+                const hayFolioNuevo = nuevas.some(x => !idsAntes.has(x.id));
+                if (hayFolioNuevo) state.bannerNoCubrirCerrado = false;
+
+                state.noCubrirAlta = nuevas;
+            }
+
+            window.cerrarBannerNoCubrir = function() {
+                state.bannerNoCubrirCerrado = true;
                 render();
             };
 
@@ -711,12 +782,15 @@
             const NOMBRES_CAMPO_DASHBOARD = {
                 estatusVacante: 'Estatus',
                 prioridad: 'Prioridad',
+                prioridadEfectiva: 'Prioridad',
                 ciudad: 'Ciudad',
                 cliente: 'Cliente',
                 gerenteDirector: 'Gerente/Director',
                 sucursal: 'Tienda',
                 proyecto: 'Proyecto',
-                motivoReapertura: 'Motivo de Reapertura'
+                motivoReapertura: 'Motivo de Reapertura',
+                viatica: 'Viática',
+                vacanteReferida: 'Referida'
             };
 
             // Activa/desactiva el filtro cruzado del dashboard. Si ya estaba activo
@@ -909,6 +983,16 @@
                             <div style="height:300px"><canvas id="chartMotivoReapertura"></canvas></div>
                         </div>
                     </div>
+                    <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="${cont} p-4 rounded-lg shadow-lg border">
+                            <p class="text-white font-semibold mb-3">Vacantes Viáticadas</p>
+                            <div style="height:280px"><canvas id="chartViatica"></canvas></div>
+                        </div>
+                        <div class="${cont} p-4 rounded-lg shadow-lg border">
+                            <p class="text-white font-semibold mb-3">Vacantes Referidas</p>
+                            <div style="height:280px"><canvas id="chartReferida"></canvas></div>
+                        </div>
+                    </div>
                 `;
             }
 
@@ -1001,7 +1085,7 @@
                 }
 
                 // --- Distribución por prioridad ---
-                const porPrioridad = topPorCampo(vacantes, 'prioridad', 5);
+                const porPrioridad = topPorCampo(vacantes, 'prioridadEfectiva', 5);
                 const ctxPrioridad = document.getElementById('chartPrioridad');
                 if (ctxPrioridad && porPrioridad.length) {
                     dashboardCharts.prioridad = new Chart(ctxPrioridad, {
@@ -1010,7 +1094,35 @@
                             labels: porPrioridad.map(x => x[0]),
                             datasets: [{ data: porPrioridad.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
                         },
-                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('prioridad'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('prioridadEfectiva'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                    });
+                }
+
+                // --- Vacantes Viáticadas ---
+                const porViatica = topPorCampo(vacantes, 'viatica', 5);
+                const ctxViatica = document.getElementById('chartViatica');
+                if (ctxViatica && porViatica.length) {
+                    dashboardCharts.viatica = new Chart(ctxViatica, {
+                        type: 'doughnut',
+                        data: {
+                            labels: porViatica.map(x => x[0] || 'Sin especificar'),
+                            datasets: [{ data: porViatica.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
+                        },
+                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('viatica'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                    });
+                }
+
+                // --- Vacantes Referidas ---
+                const porReferida = topPorCampo(vacantes, 'vacanteReferida', 5);
+                const ctxReferida = document.getElementById('chartReferida');
+                if (ctxReferida && porReferida.length) {
+                    dashboardCharts.referida = new Chart(ctxReferida, {
+                        type: 'doughnut',
+                        data: {
+                            labels: porReferida.map(x => x[0] || 'Sin especificar'),
+                            datasets: [{ data: porReferida.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
+                        },
+                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('vacanteReferida'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
                     });
                 }
 
@@ -1104,6 +1216,7 @@
                     fechaSolicitud: row.FechaSolicitud || '',
                     fechaVencimiento: row.FechaVencimiento || '',
                     prioridad: row.Prioridad || 'Media',
+                    prioridadEfectiva: row.Prioridad || 'Media', // se recalcula en actualizarPrioridadesEfectivas()
                     estatusVacante: row.EstatusVacante || 'VIGENTE',
                     fechaCubierta: row.FechaCubierta || '',
                     usuarioCarga: row.UsuarioCarga || '',
@@ -1124,6 +1237,7 @@
                     if (Array.isArray(data) && data.length) {
                         state.vacancies = data.map(normalizarVacanteDesdeSheet);
                         actualizarVacantesVencidas();
+                        actualizarPrioridadesEfectivas();
                         // No repintar la pantalla si el usuario tiene el formulario de
                         // Nueva Vacante abierto: se perdería lo que está escribiendo.
                         // Los datos ya quedaron actualizados en el estado, y se verán
@@ -1548,13 +1662,15 @@
                 const baseFv = getFilteredVacanciesBase();
                 const fv = aplicarFiltroTarjeta(baseFv);
                 const conteoActivas = baseFv.filter(v => v.estado === 'Activo').length;
-                const conteoPrioridadAlta = baseFv.filter(v => v.prioridad === 'Alta').length;
+                const conteoVigentes = baseFv.filter(v => ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)).length;
+                const conteoPrioridadAlta = baseFv.filter(v => (v.prioridadEfectiva || v.prioridad) === 'Alta').length;
                 const conteoCubiertas = baseFv.filter(v => v.estatusVacante === 'CUBIERTA').length;
                 const conteoReaperturas = baseFv.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)).length;
                 const conteoCanceladas = baseFv.filter(v => v.estatusVacante === 'CANCELADA').length;
                 const claseTarjeta = (tarjeta) => `bg-[#1a1a1a] p-4 rounded-lg shadow-lg border text-left w-full transition-colors hover:border-blue-500 ${state.filterCard === tarjeta ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-800'}`;
                 const isLight = state.theme === 'light';
                 const mostrarBannerVencidas = state.vencidas.length > 0 && !state.bannerVencidasCerrado;
+                const mostrarBannerNoCubrir = state.noCubrirAlta.length > 0 && !state.bannerNoCubrirCerrado;
                 // Guardamos el scroll de la tabla (vertical Y horizontal) y de la
                 // ventana antes de reemplazar el HTML, porque al recrear el
                 // contenedor el navegador lo monta con scrollTop/scrollLeft = 0
@@ -1605,19 +1721,36 @@
                     </div>
                     ` : ''}
 
+                    ${mostrarBannerNoCubrir ? `
+                    <div class="mb-6 rounded-lg border p-4 no-imprimir ${isLight ? 'bg-orange-50 border-orange-300' : 'bg-orange-950/40 border-orange-800'}">
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="flex items-start gap-3">
+                                <span class="mt-0.5 ${isLight ? 'text-orange-600' : 'text-orange-400'}">${icons.alertTriangle}</span>
+                                <div>
+                                    <p class="text-left text-sm font-semibold mb-1 ${isLight ? 'text-orange-800' : 'text-orange-300'}">
+                                        ${state.noCubrirAlta.length} vacante${state.noCubrirAlta.length === 1 ? '' : 's'} Alta por no cubrir (3+ días)
+                                    </p>
+                                    <ul class="text-sm space-y-0.5 ${isLight ? 'text-orange-700' : 'text-orange-300'}">
+                                        ${state.noCubrirAlta.map(x => `<li>Folio ${x.id} — ${x.dias} día${x.dias === 1 ? '' : 's'} sin cubrir</li>`).join('')}
+                                    </ul>
+                                </div>
+                            </div>
+                            <button type="button" onclick="cerrarBannerNoCubrir()" title="Cerrar aviso" class="shrink-0 ${isLight ? 'text-orange-600 hover:text-orange-800' : 'text-orange-400 hover:text-orange-200'}">
+                                ${icons.x.replace('width="24"', 'width="18"').replace('height="24"', 'height="18"')}
+                            </button>
+                        </div>
+                    </div>
+                    ` : ''}
+
                     ${state.view === 'dashboard' ? renderDashboardHTML(aplicarFiltroDashboard(baseFv)) : `
-                    <div class="mb-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                    <div class="mb-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
                         <button type="button" onclick="filtrarPorTarjeta('total')" class="${claseTarjeta('total')}">
                             <p class="text-gray-400 text-sm">Total de Vacantes</p>
                             <p class="text-white text-2xl font-bold mt-1">${baseFv.length}</p>
                         </button>
-                        <button type="button" onclick="filtrarPorTarjeta('activas')" class="${claseTarjeta('activas')}">
-                            <p class="text-gray-400 text-sm">Vacantes Activas</p>
-                            <p class="text-white text-2xl font-bold mt-1">${conteoActivas}</p>
-                        </button>
-                        <button type="button" onclick="filtrarPorTarjeta('prioridadAlta')" class="${claseTarjeta('prioridadAlta')}">
-                            <p class="text-gray-400 text-sm">Prioridad Alta</p>
-                            <p class="text-white text-2xl font-bold mt-1">${conteoPrioridadAlta}</p>
+                        <button type="button" onclick="filtrarPorTarjeta('vigentes')" class="${claseTarjeta('vigentes')}">
+                            <p class="text-gray-400 text-sm">Vigentes</p>
+                            <p class="text-white text-2xl font-bold mt-1">${conteoVigentes}</p>
                         </button>
                         <button type="button" onclick="filtrarPorTarjeta('cubiertas')" class="${claseTarjeta('cubiertas')}">
                             <p class="text-gray-400 text-sm">Vacantes Cubiertas</p>
@@ -1696,7 +1829,7 @@
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">SUCURSAL</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">DIRECCIÓN DE TIENDA</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FECHA DE SOLICITUD</th>
-                                        <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FECHA DE VENCIMIENTO</th>
+                                        <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FECHA LÍMITE CONTRATACIÓN</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">PRIORIDAD</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-red-700">ESTATUS VACANTE</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">DÍAS EN PROCESO</th>
@@ -1725,7 +1858,7 @@
                                             <td class="px-4 py-3 text-sm text-gray-300">${fechaCorta(v.fechaSolicitud)}</td>
                                             <td class="px-4 py-3 text-sm text-gray-300">${fechaCorta(v.fechaVencimiento)}</td>
                                             <td class="px-4 py-3 text-sm">
-                                                <span class="px-2 py-1 rounded-full text-xs ${getPrioridadColor(v.prioridad)}">${v.prioridad}</span>
+                                                <span class="px-2 py-1 rounded-full text-xs ${getPrioridadColor(v.prioridadEfectiva || v.prioridad)}">${v.prioridadEfectiva || v.prioridad}</span>
                                             </td>
                                             <td class="px-4 py-3 text-sm">
                                                 <span class="px-3 py-1 rounded-lg text-xs ${getEstatusColor(v.estatusVacante)}">${v.estatusVacante}</span>
@@ -1784,13 +1917,21 @@
                                         <div><label class="block text-gray-300 text-sm mb-2">Proyecto</label><input type="text" readonly name="proyecto" id="proyectoInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
                                         <div><label class="block text-gray-300 text-sm mb-2">Formato</label><input type="text" readonly name="formato" id="formatoInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
                                         <div class="col-span-2"><label class="block text-gray-300 text-sm mb-2">Dirección de Tienda</label><input type="text" readonly name="direccionTienda" id="direccionTiendaInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
-                                        <div><label class="block text-gray-300 text-sm mb-2">Fecha Solicitud</label><input type="date" required name="fechaSolicitud" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" /></div>
-                                        <div><label class="block text-gray-300 text-sm mb-2">Fecha Vencimiento</label><input type="date" required name="fechaVencimiento" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" /></div>
                                         <div>
                                             <label class="block text-gray-300 text-sm mb-2">Prioridad</label>
-                                            <select required name="prioridad" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                            <select required name="prioridad" id="prioridadSelect" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
                                                 <option value="">Selecciona...</option>
                                                 ${state.catalogos.prioridades.map(p => `<option value="${p}">${p}</option>`).join('')}
+                                            </select>
+                                        </div>
+                                        <div><label class="block text-gray-300 text-sm mb-2">Fecha Solicitud</label><input type="date" required readonly name="fechaSolicitud" id="fechaSolicitudInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                        <div><label class="block text-gray-300 text-sm mb-2">Fecha Límite Contratación</label><input type="date" required readonly name="fechaVencimiento" id="fechaVencimientoInput" class="w-full px-3 py-2 bg-[#151515] border border-gray-700 text-gray-300 rounded-lg cursor-not-allowed" /></div>
+                                        <div>
+                                            <label class="block text-gray-300 text-sm mb-2">¿Viática?</label>
+                                            <select required name="viatica" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                                <option value="">Selecciona...</option>
+                                                <option value="Sí">Sí</option>
+                                                <option value="No">No</option>
                                             </select>
                                         </div>
                                         <div class="col-span-2">
@@ -1799,6 +1940,26 @@
                                                 <option value="">Selecciona...</option>
                                                 ${state.catalogos.motivos.map(m => `<option value="${m}">${m}</option>`).join('')}
                                             </select>
+                                        </div>
+                                        <div class="col-span-2">
+                                            <label class="block text-gray-300 text-sm mb-2">¿Vacante Referida?</label>
+                                            <select required name="vacanteReferida" id="vacanteReferidaSelect" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg">
+                                                <option value="">Selecciona...</option>
+                                                <option value="Sí">Sí</option>
+                                                <option value="No">No</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-span-2 hidden" id="referidoDatosWrapper">
+                                            <div class="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label class="block text-gray-300 text-sm mb-2">Nombre de la persona referida</label>
+                                                    <input type="text" name="referidoNombre" id="referidoNombreInput" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-gray-300 text-sm mb-2">Teléfono de la persona referida</label>
+                                                    <input type="text" name="referidoTelefono" id="referidoTelefonoInput" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
+                                                </div>
+                                            </div>
                                         </div>
                                         <div class="col-span-2">
                                             <label class="block text-gray-300 text-sm mb-2">Observaciones Adicionales</label>
@@ -1998,6 +2159,67 @@
                         actualizarAvisoObservaciones();
                     }
 
+                    // Fecha Solicitud siempre es el día en que se llena el formulario;
+                    // Fecha Límite Contratación se calcula sola según la Prioridad
+                    // elegida (Alta: 1 semana, Media: 15 días, Baja: 1 mes). Ambos
+                    // campos quedan bloqueados (readonly) para que no se editen a mano.
+                    const DIAS_POR_PRIORIDAD = { alta: { dias: 7 }, media: { dias: 15 }, baja: { meses: 1 } };
+                    const prioridadSelect = document.getElementById('prioridadSelect');
+                    const fechaSolicitudInput = document.getElementById('fechaSolicitudInput');
+                    const fechaVencimientoInput = document.getElementById('fechaVencimientoInput');
+
+                    function hoyComoInputDate() {
+                        const hoy = new Date();
+                        const yyyy = hoy.getFullYear();
+                        const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+                        const dd = String(hoy.getDate()).padStart(2, '0');
+                        return `${yyyy}-${mm}-${dd}`;
+                    }
+
+                    function actualizarFechaLimiteContratacion() {
+                        if (!fechaSolicitudInput || !fechaVencimientoInput || !prioridadSelect) return;
+                        const config = DIAS_POR_PRIORIDAD[prioridadSelect.value.trim().toLowerCase()];
+                        if (!config || !fechaSolicitudInput.value) { fechaVencimientoInput.value = ''; return; }
+                        const limite = new Date(fechaSolicitudInput.value + 'T00:00:00');
+                        if (config.dias) limite.setDate(limite.getDate() + config.dias);
+                        if (config.meses) limite.setMonth(limite.getMonth() + config.meses);
+                        const yyyy = limite.getFullYear();
+                        const mm = String(limite.getMonth() + 1).padStart(2, '0');
+                        const dd = String(limite.getDate()).padStart(2, '0');
+                        fechaVencimientoInput.value = `${yyyy}-${mm}-${dd}`;
+                    }
+
+                    if (fechaSolicitudInput && !fechaSolicitudInput.value) {
+                        fechaSolicitudInput.value = hoyComoInputDate();
+                    }
+                    if (prioridadSelect) {
+                        prioridadSelect.addEventListener('change', actualizarFechaLimiteContratacion);
+                        actualizarFechaLimiteContratacion();
+                    }
+
+                    // Si la vacante ya está referida, se piden nombre y teléfono
+                    // de la persona referida (campos ocultos y no requeridos por
+                    // defecto; se vuelven visibles y obligatorios solo con "Sí").
+                    const vacanteReferidaSelect = document.getElementById('vacanteReferidaSelect');
+                    const referidoDatosWrapper = document.getElementById('referidoDatosWrapper');
+                    const referidoNombreInput = document.getElementById('referidoNombreInput');
+                    const referidoTelefonoInput = document.getElementById('referidoTelefonoInput');
+                    function actualizarCamposReferido() {
+                        if (!vacanteReferidaSelect || !referidoDatosWrapper) return;
+                        const esReferida = vacanteReferidaSelect.value === 'Sí';
+                        referidoDatosWrapper.classList.toggle('hidden', !esReferida);
+                        if (referidoNombreInput) referidoNombreInput.required = esReferida;
+                        if (referidoTelefonoInput) referidoTelefonoInput.required = esReferida;
+                        if (!esReferida) {
+                            if (referidoNombreInput) referidoNombreInput.value = '';
+                            if (referidoTelefonoInput) referidoTelefonoInput.value = '';
+                        }
+                    }
+                    if (vacanteReferidaSelect) {
+                        vacanteReferidaSelect.addEventListener('change', actualizarCamposReferido);
+                        actualizarCamposReferido();
+                    }
+
                     const camposAutoTienda = ['idTiendaInput', 'estadoInput', 'ciudadInput', 'clienteInput', 'proyectoInput', 'formatoInput', 'direccionTiendaInput'];
                     function limpiarCamposTienda() {
                         camposAutoTienda.forEach(id => { document.getElementById(id).value = ''; });
@@ -2064,6 +2286,9 @@
                         const nv = {
                             id: 'FOL' + String(state.vacancies.length + 1).padStart(4, '0'),
                             requerimiento: fd.get('requerimiento'),
+                            vacanteReferida: fd.get('vacanteReferida'),
+                            referidoNombre: fd.get('referidoNombre'),
+                            referidoTelefono: fd.get('referidoTelefono'),
                             vacante: fd.get('vacante'),
                             gerenteDirector: fd.get('gerenteDirector'),
                             idTienda: fd.get('idTienda'),
@@ -2078,6 +2303,7 @@
                             fechaSolicitud: fd.get('fechaSolicitud'),
                             fechaVencimiento: fd.get('fechaVencimiento'),
                             prioridad: fd.get('prioridad'),
+                            viatica: fd.get('viatica'),
                             estatusVacante: 'VIGENTE',
                             fechaCubierta: '',
                             usuarioCarga: state.currentUser ? state.currentUser.usuario : '',
