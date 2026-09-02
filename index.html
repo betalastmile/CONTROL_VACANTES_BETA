@@ -123,7 +123,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxEj_v2ZxZ-QHpSbYlxxt2lyeUuvJhx4NWL31pTzCTx55-ZoMW9LpPtOw5sAu2sm3-O/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzBA6gUwIKFVc1qfCjmelZ5Peyg4piLGxk86CovJcjeKnCKJA7qAmvl6_JTwwqHvdnn/exec ';
 
             function enviarWhatsAppVacante(v) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -323,7 +323,7 @@
                 filterEstatusVacante: 'Todos',
                 filterPrioridad: 'Todas',
                 filterGerencia: 'Todas',
-                filterCard: 'total',   // 'total' | 'activas' | 'prioridadAlta' | 'cubiertas' | 'reaperturas' | 'canceladas' | 'vencidas' — filtro activo por tarjeta
+                filterCard: 'total',   // 'total' | 'activas' | 'prioridadAlta' | 'cubiertas' | 'reaperturas' | 'canceladas' | 'vencidas' | 'noCubrir' | 'prioridadEscalada' — filtro activo por tarjeta
                 showNewVacancyModal: false,
                 currentUser: null,      // { usuario, nombre } una vez logueado
                 loginError: '',
@@ -493,6 +493,14 @@
                     case 'vencidas': {
                         const idsVencidas = new Set(state.vencidas.map(x => x.id));
                         return lista.filter(v => idsVencidas.has(v.id));
+                    }
+                    case 'noCubrir': {
+                        const idsNoCubrir = new Set(state.noCubrirAlta.map(x => x.id));
+                        return lista.filter(v => idsNoCubrir.has(v.id));
+                    }
+                    case 'prioridadEscalada': {
+                        const idsEscalada = new Set(state.prioridadEscalada.map(x => x.id));
+                        return lista.filter(v => idsEscalada.has(v.id));
                     }
                     default: return lista;
                 }
@@ -1837,10 +1845,10 @@
                                 <span class="mt-0.5 ${isLight ? 'text-red-600' : 'text-red-400'}">${icons.alertTriangle}</span>
                                 <div>
                                     <button type="button" onclick="filtrarPorTarjeta('vencidas')" class="text-left hover:underline text-sm font-semibold mb-1 ${isLight ? 'text-red-800' : 'text-red-300'}">
-                                        ${state.vencidas.length} vacante${state.vencidas.length === 1 ? '' : 's'} vencida${state.vencidas.length === 1 ? '' : 's'}${state.filterCard === 'vencidas' ? ' (filtrando)' : ''}
+                                        ${state.vencidas.length} vacante${state.vencidas.length === 1 ? '' : 's'} retrasada${state.vencidas.length === 1 ? '' : 's'} sin cubrir${state.filterCard === 'vencidas' ? ' (filtrando)' : ''}
                                     </button>
                                     <ul class="text-sm space-y-0.5 ${isLight ? 'text-red-700' : 'text-red-300'}">
-                                        ${state.vencidas.map(x => `<li>Folio ${x.id} — ${x.dias} día${x.dias === 1 ? '' : 's'} vencida</li>`).join('')}
+                                        ${state.vencidas.map(x => `<li>Folio ${x.id} — ${x.dias} día${x.dias === 1 ? '' : 's'} de retraso sin cubrir</li>`).join('')}
                                     </ul>
                                 </div>
                             </div>
@@ -1857,9 +1865,9 @@
                             <div class="flex items-start gap-3">
                                 <span class="mt-0.5 ${isLight ? 'text-orange-600' : 'text-orange-400'}">${icons.alertTriangle}</span>
                                 <div>
-                                    <p class="text-left text-sm font-semibold mb-1 ${isLight ? 'text-orange-800' : 'text-orange-300'}">
-                                        ${state.noCubrirAlta.length} vacante${state.noCubrirAlta.length === 1 ? '' : 's'} Alta por no cubrir (3+ días)
-                                    </p>
+                                    <button type="button" onclick="filtrarPorTarjeta('noCubrir')" class="text-left hover:underline text-sm font-semibold mb-1 ${isLight ? 'text-orange-800' : 'text-orange-300'}">
+                                        ${state.noCubrirAlta.length} vacante${state.noCubrirAlta.length === 1 ? '' : 's'} ALTA por no cubrir (3+ días)${state.filterCard === 'noCubrir' ? ' (filtrando)' : ''}
+                                    </button>
                                     <ul class="text-sm space-y-0.5 ${isLight ? 'text-orange-700' : 'text-orange-300'}">
                                         ${state.noCubrirAlta.map(x => `<li>Folio ${x.id} — ${x.dias} día${x.dias === 1 ? '' : 's'} sin cubrir</li>`).join('')}
                                     </ul>
@@ -1878,9 +1886,9 @@
                             <div class="flex items-start gap-3">
                                 <span class="mt-0.5 ${isLight ? 'text-yellow-600' : 'text-yellow-400'}">${icons.alertTriangle}</span>
                                 <div>
-                                    <p class="text-left text-sm font-semibold mb-1 ${isLight ? 'text-yellow-800' : 'text-yellow-300'}">
-                                        ${state.prioridadEscalada.length} folio${state.prioridadEscalada.length === 1 ? '' : 's'} con cambio automático de prioridad
-                                    </p>
+                                    <button type="button" onclick="filtrarPorTarjeta('prioridadEscalada')" class="text-left hover:underline text-sm font-semibold mb-1 ${isLight ? 'text-yellow-800' : 'text-yellow-300'}">
+                                        ${state.prioridadEscalada.length} folio${state.prioridadEscalada.length === 1 ? '' : 's'} con cambio automático de prioridad${state.filterCard === 'prioridadEscalada' ? ' (filtrando)' : ''}
+                                    </button>
                                     <ul class="text-sm space-y-0.5 ${isLight ? 'text-yellow-700' : 'text-yellow-300'}">
                                         ${state.prioridadEscalada.map(x => `<li>Folio ${x.id} — prioridad cambió de ${x.de} a ${x.a}</li>`).join('')}
                                     </ul>
