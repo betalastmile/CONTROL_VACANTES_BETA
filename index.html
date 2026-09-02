@@ -123,7 +123,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzomXrIy4eesCCr1kqbBXBT0nwuCl121F6uTFeakNZuA5wE8wwOVapaSRnQhIegi_jL/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxEj_v2ZxZ-QHpSbYlxxt2lyeUuvJhx4NWL31pTzCTx55-ZoMW9LpPtOw5sAu2sm3-O/exec';
 
             function enviarWhatsAppVacante(v) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -137,11 +137,11 @@
                     `Dirección de tienda: ${v.direccionTienda || ''}\n` +
                     `Formato: ${v.formato}\n` +
                     `Prioridad: ${v.prioridad}\n` +
-                    `¿Viática?: ${v.viatica || ''}\n` +
+                    `Genera Viáticos para cubrir la vacante: ${v.viatica || ''}\n` +
                     `Estatus: ${v.estatusVacante}\n` +
                     `Fecha de solicitud: ${v.fechaSolicitud}\n` +
                     `Fecha límite de contratación: ${v.fechaVencimiento}\n` +
-                    `¿Vacante Referida?: ${v.vacanteReferida || ''}` +
+                    `La vacante esta ya referida en Joins: ${v.vacanteReferida || ''}` +
                     `${v.vacanteReferida === 'Sí' ? `\nReferido: ${v.referidoNombre || ''} — ${v.referidoTelefono || ''}` : ''}\n` +
                     `Observaciones Adicionales: ${v.requerimiento}`;
                 // Se abre WhatsApp sin número predefinido para que el usuario elija a quién enviarlo
@@ -297,6 +297,23 @@
                 dashboardCharts = {};
             }
 
+            // Guarda una "foto" (JSON) de lo último que se pintó en pantalla, para
+            // que el refresco automático cada 30s (cargarVacantesDesdeSheet) solo
+            // vuelva a hacer render() cuando algo REALMENTE cambió. Antes se hacía
+            // render() en cada refresco así no hubiera cambios, y como render()
+            // reemplaza todo el innerHTML de #app, eso se sentía como un "flash"
+            // (parpadeo) que además regresaba el scroll por un instante antes de
+            // que se restaurara.
+            let firmaVacantesRenderizadas = null;
+            function calcularFirmaVacantes() {
+                return JSON.stringify({
+                    v: state.vacancies,
+                    vencidas: state.vencidas,
+                    noCubrir: state.noCubrirAlta,
+                    prioridadEscalada: state.prioridadEscalada
+                });
+            }
+
             let state = {
                 vacancies: [...mockData],
                 view: 'vacantes',   // 'vacantes' | 'dashboard'
@@ -319,6 +336,9 @@
                 bannerVencidasCerrado: false,  // el usuario cerró el banner (se reabre si aparece un folio vencido nuevo)
                 noCubrirAlta: [],              // folios Alta con 3+ días sin cubrir (ver actualizarPrioridadesEfectivas)
                 bannerNoCubrirCerrado: false,  // el usuario cerró el banner de "por no cubrir" (se reabre si aparece un folio nuevo)
+                prioridadEscalada: [],          // [{ id, de, a }] folios cuya prioridad se escaló automáticamente en esta sesión
+                bannerPrioridadCerrado: false,  // el usuario cerró el banner de "prioridad escalada" (se reabre si aparece un folio nuevo)
+                prioridadEscaladaEnviados: new Set(), // 'FOL0001|Media|Alta' ya persistidos en esta sesión, evita reenvíos al backend
 
                 // --- Flujo de Reapertura ---
                 showReaperturaModal: false,
@@ -359,7 +379,7 @@
                     state.catalogos = {
                         puestos: data.puestos || [],
                         motivos: data.motivos || [],
-                        prioridades: data.prioridades || [],
+                        prioridades: (data.prioridades || []).map(p => String(p).trim().toUpperCase()),
                         gerentes: data.gerentes || [],
                         motivosReapertura: data.motivosReapertura || []   // columna "MOTIVO REAPERTURA" de la hoja CATALOGOS
                     };
@@ -405,8 +425,8 @@
             const estatusOptions = ['VIGENTE', 'CANCELADA', 'CUBIERTA', 'PAUSADO', 'FORMALIZADO', 'NEGOCIACION ALIADO EXTERNO', 'REGULARIZACION', 'VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
 
             function getPrioridadColor(prioridad) {
-                const colors = { 'Alta': 'bg-red-100 text-red-800', 'Media': 'bg-yellow-100 text-yellow-800', 'Baja': 'bg-green-100 text-green-800' };
-                return colors[prioridad] || 'bg-gray-100 text-gray-800';
+                const colors = { 'ALTA': 'bg-red-100 text-red-800', 'MEDIA': 'bg-yellow-100 text-yellow-800', 'BAJA': 'bg-green-100 text-green-800' };
+                return colors[String(prioridad || '').trim().toUpperCase()] || 'bg-gray-100 text-gray-800';
             }
 
             function getEstatusColor(estatus) {
@@ -466,7 +486,7 @@
                 switch (state.filterCard) {
                     case 'activas': return lista.filter(v => v.estado === 'Activo');
                     case 'vigentes': return lista.filter(v => ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante));
-                    case 'prioridadAlta': return lista.filter(v => (v.prioridadEfectiva || v.prioridad) === 'Alta');
+                    case 'prioridadAlta': return lista.filter(v => (v.prioridadEfectiva || v.prioridad) === 'ALTA');
                     case 'cubiertas': return lista.filter(v => v.estatusVacante === 'CUBIERTA');
                     case 'reaperturas': return lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante));
                     case 'canceladas': return lista.filter(v => v.estatusVacante === 'CANCELADA');
@@ -610,18 +630,18 @@
             }
 
             function calcularPrioridadEfectiva(v) {
-                const original = (v.prioridad || 'Media').trim();
+                const original = String(v.prioridad || 'MEDIA').trim().toUpperCase();
                 if (!ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)) return original;
                 const dias = diasTranscurridosSolicitud(v);
                 if (dias === null) return original;
                 const clave = original.toLowerCase();
                 if (clave === 'baja') {
-                    if (dias >= 23) return 'Alta';
-                    if (dias >= 15) return 'Media';
+                    if (dias >= 23) return 'ALTA';
+                    if (dias >= 15) return 'MEDIA';
                     return original;
                 }
                 if (clave === 'media' || clave === 'quincenal') {
-                    if (dias >= 7) return 'Alta';
+                    if (dias >= 7) return 'ALTA';
                     return original;
                 }
                 return original;
@@ -631,15 +651,49 @@
             // como "por no cubrir" para el banner de alerta.
             function requiereAlertaNoCubrir(v) {
                 if (!ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)) return false;
-                if ((v.prioridad || '').trim().toLowerCase() !== 'alta') return false;
+                if (String(v.prioridad || '').trim().toUpperCase() !== 'ALTA') return false;
                 const dias = diasTranscurridosSolicitud(v);
                 return dias !== null && dias >= 3;
             }
 
+            // Guarda en el Sheet (columna Prioridad) el nuevo valor cuando la
+            // escalación automática cambia la prioridad de un folio, para que la
+            // fuente de verdad quede sincronizada con lo que se muestra en pantalla.
+            // "Fire and forget": no bloquea la interfaz ni reintenta si falla; en el
+            // siguiente refresco (cargarVacantesDesdeSheet, cada 30s) se vuelve a
+            // intentar si el cambio no llegó a guardarse.
+            function persistirPrioridadEscalada_(id, nuevaPrioridad) {
+                fetch(NOTIF_APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ accion: 'actualizar_prioridad', id, prioridad: nuevaPrioridad })
+                }).catch(err => console.error('Error al persistir la escalación automática de prioridad:', err));
+            }
+
             // Recalcula prioridadEfectiva para todas las vacantes en memoria y arma
-            // la lista de folios Alta "por no cubrir" (state.noCubrirAlta).
+            // la lista de folios Alta "por no cubrir" (state.noCubrirAlta). Además,
+            // cuando la prioridad calculada de un folio sube respecto a la guardada
+            // en el Sheet (Media->Alta, Baja->Media, Baja->Alta), la persiste en el
+            // Sheet y agrega un aviso al banner de "prioridad escalada".
             function actualizarPrioridadesEfectivas() {
-                state.vacancies.forEach(v => { v.prioridadEfectiva = calcularPrioridadEfectiva(v); });
+                state.vacancies.forEach(v => {
+                    const original = String(v.prioridad || 'MEDIA').trim().toUpperCase();
+                    const nueva = calcularPrioridadEfectiva(v);
+                    if (nueva !== original) {
+                        const clave = v.id + '|' + original + '|' + nueva;
+                        if (!state.prioridadEscaladaEnviados.has(clave)) {
+                            state.prioridadEscaladaEnviados.add(clave);
+                            persistirPrioridadEscalada_(v.id, nueva);
+                            state.prioridadEscalada.push({ id: v.id, de: original, a: nueva });
+                            state.bannerPrioridadCerrado = false;
+                            // Optimista: evita que se vuelva a detectar el mismo cambio
+                            // en el próximo recálculo, antes de que llegue el refresco
+                            // del Sheet con el valor ya persistido.
+                            v.prioridad = nueva;
+                        }
+                    }
+                    v.prioridadEfectiva = nueva;
+                });
                 const nuevas = state.vacancies
                     .filter(requiereAlertaNoCubrir)
                     .map(v => ({ id: v.id, dias: diasTranscurridosSolicitud(v) }))
@@ -654,6 +708,11 @@
 
             window.cerrarBannerNoCubrir = function() {
                 state.bannerNoCubrirCerrado = true;
+                render();
+            };
+
+            window.cerrarBannerPrioridad = function() {
+                state.bannerPrioridadCerrado = true;
                 render();
             };
 
@@ -793,8 +852,8 @@
                 sucursal: 'Tienda',
                 proyecto: 'Proyecto',
                 motivoReapertura: 'Motivo de Reapertura',
-                viatica: 'Viática',
-                vacanteReferida: 'Referida'
+                viatica: 'Genera Viáticos para cubrir la vacante',
+                vacanteReferida: 'La vacante esta ya referida en Joins'
             };
 
             // Activa/desactiva el filtro cruzado del dashboard. Si ya estaba activo
@@ -989,11 +1048,11 @@
                     </div>
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
-                            <p class="text-white font-semibold mb-3">Vacantes Viáticadas</p>
+                            <p class="text-white font-semibold mb-3">Genera Viáticos para cubrir la vacante</p>
                             <div style="height:280px"><canvas id="chartViatica"></canvas></div>
                         </div>
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
-                            <p class="text-white font-semibold mb-3">Vacantes Referidas</p>
+                            <p class="text-white font-semibold mb-3">La vacante esta ya referida en Joins</p>
                             <div style="height:280px"><canvas id="chartReferida"></canvas></div>
                         </div>
                     </div>
@@ -1219,8 +1278,8 @@
                     direccionTienda: row.DireccionTienda || '',
                     fechaSolicitud: row.FechaSolicitud || '',
                     fechaVencimiento: row.FechaVencimiento || '',
-                    prioridad: row.Prioridad || 'Media',
-                    prioridadEfectiva: row.Prioridad || 'Media', // se recalcula en actualizarPrioridadesEfectivas()
+                    prioridad: String(row.Prioridad || 'MEDIA').trim().toUpperCase(),
+                    prioridadEfectiva: String(row.Prioridad || 'MEDIA').trim().toUpperCase(), // se recalcula en actualizarPrioridadesEfectivas()
                     estatusVacante: row.EstatusVacante || 'VIGENTE',
                     fechaCubierta: row.FechaCubierta || '',
                     usuarioCarga: row.UsuarioCarga || '',
@@ -1237,6 +1296,45 @@
                 };
             }
 
+            // --- Sonido de aviso cuando aparece una vacante nueva ---
+            // Se genera con Web Audio (dos tonos cortos tipo "ding-dong"), sin
+            // depender de ningún archivo de audio externo. audioCtxNotificacion se
+            // crea perezosamente la primera vez que se necesita, porque los
+            // navegadores no dejan crear/usar un AudioContext antes de que el
+            // usuario haya interactuado con la página (por ejemplo, al iniciar
+            // sesión), o lo mantienen "suspended" hasta entonces.
+            let audioCtxNotificacion = null;
+            function sonarAvisoNuevaVacante() {
+                try {
+                    if (!audioCtxNotificacion) {
+                        audioCtxNotificacion = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    const ctx = audioCtxNotificacion;
+                    if (ctx.state === 'suspended') ctx.resume();
+                    const ahora = ctx.currentTime;
+                    [880, 1320].forEach((frecuencia, i) => {
+                        const inicio = ahora + i * 0.15;
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.value = frecuencia;
+                        gain.gain.setValueAtTime(0, inicio);
+                        gain.gain.linearRampToValueAtTime(0.22, inicio + 0.02);
+                        gain.gain.exponentialRampToValueAtTime(0.001, inicio + 0.2);
+                        osc.connect(gain).connect(ctx.destination);
+                        osc.start(inicio);
+                        osc.stop(inicio + 0.22);
+                    });
+                } catch (err) {
+                    console.error('No se pudo reproducir el sonido de aviso de vacante nueva:', err);
+                }
+            }
+
+            // Evita que suene el aviso en la primerísima carga (justo después de
+            // iniciar sesión o al recargar la página), donde "todos" los folios
+            // se ven como nuevos por venir de mockData / estado vacío.
+            let primeraCargaVacantesLista = false;
+
             // El estatus de cada vacante lo controla el CRM2: aquí solo lo leemos
             // desde el mismo Google Sheet para mantenerlo sincronizado.
             async function cargarVacantesDesdeSheet() {
@@ -1244,15 +1342,32 @@
                     const res = await fetch(NOTIF_APPS_SCRIPT_URL + '?accion=obtener_vacantes');
                     const data = await res.json();
                     if (Array.isArray(data) && data.length) {
+                        const idsAntes = new Set(state.vacancies.map(v => v.id));
                         state.vacancies = data.map(normalizarVacanteDesdeSheet);
                         actualizarVacantesVencidas();
                         actualizarPrioridadesEfectivas();
+
+                        if (primeraCargaVacantesLista) {
+                            const hayFolioNuevo = state.vacancies.some(v => !idsAntes.has(v.id));
+                            if (hayFolioNuevo) sonarAvisoNuevaVacante();
+                        }
+                        primeraCargaVacantesLista = true;
+
                         // No repintar la pantalla si el usuario tiene el formulario de
                         // Nueva Vacante abierto: se perdería lo que está escribiendo.
                         // Los datos ya quedaron actualizados en el estado, y se verán
                         // en cuanto cierre el modal o vuelva a renderizar.
                         if (!state.showNewVacancyModal) {
-                            render();
+                            // Solo se vuelve a pintar #app si algo realmente cambió desde
+                            // el último render (nuevos folios, cambios de estatus,
+                            // prioridad escalada, etc.). Antes se hacía render() en cada
+                            // refresco de 30s aunque nada cambiara, lo que se sentía como
+                            // un "flash" (parpadeo + salto de scroll momentáneo).
+                            const firmaActual = calcularFirmaVacantes();
+                            if (firmaActual !== firmaVacantesRenderizadas) {
+                                firmaVacantesRenderizadas = firmaActual;
+                                render();
+                            }
                         }
                     }
                 } catch (err) {
@@ -1668,11 +1783,16 @@
                     renderLogin();
                     return;
                 }
+                // Se guarda aquí (y no solo en el refresco automático) para que
+                // cualquier render manual (agregar/reabrir/cancelar vacante, etc.)
+                // también quede reflejado, y el próximo refresco de 30s no repinte
+                // de más si nada cambió desde este render.
+                firmaVacantesRenderizadas = calcularFirmaVacantes();
                 const baseFv = getFilteredVacanciesBase();
                 const fv = aplicarFiltroTarjeta(baseFv);
                 const conteoActivas = baseFv.filter(v => v.estado === 'Activo').length;
                 const conteoVigentes = baseFv.filter(v => ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)).length;
-                const conteoPrioridadAlta = baseFv.filter(v => (v.prioridadEfectiva || v.prioridad) === 'Alta').length;
+                const conteoPrioridadAlta = baseFv.filter(v => (v.prioridadEfectiva || v.prioridad) === 'ALTA').length;
                 const conteoCubiertas = baseFv.filter(v => v.estatusVacante === 'CUBIERTA').length;
                 const conteoReaperturas = baseFv.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)).length;
                 const conteoCanceladas = baseFv.filter(v => v.estatusVacante === 'CANCELADA').length;
@@ -1680,6 +1800,7 @@
                 const isLight = state.theme === 'light';
                 const mostrarBannerVencidas = state.vencidas.length > 0 && !state.bannerVencidasCerrado;
                 const mostrarBannerNoCubrir = state.noCubrirAlta.length > 0 && !state.bannerNoCubrirCerrado;
+                const mostrarBannerPrioridad = state.prioridadEscalada.length > 0 && !state.bannerPrioridadCerrado;
                 // Guardamos el scroll de la tabla (vertical Y horizontal) y de la
                 // ventana antes de reemplazar el HTML, porque al recrear el
                 // contenedor el navegador lo monta con scrollTop/scrollLeft = 0
@@ -1751,6 +1872,27 @@
                     </div>
                     ` : ''}
 
+                    ${mostrarBannerPrioridad ? `
+                    <div class="mb-6 rounded-lg border p-4 no-imprimir ${isLight ? 'bg-yellow-50 border-yellow-300' : 'bg-yellow-950/40 border-yellow-800'}">
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="flex items-start gap-3">
+                                <span class="mt-0.5 ${isLight ? 'text-yellow-600' : 'text-yellow-400'}">${icons.alertTriangle}</span>
+                                <div>
+                                    <p class="text-left text-sm font-semibold mb-1 ${isLight ? 'text-yellow-800' : 'text-yellow-300'}">
+                                        ${state.prioridadEscalada.length} folio${state.prioridadEscalada.length === 1 ? '' : 's'} con cambio automático de prioridad
+                                    </p>
+                                    <ul class="text-sm space-y-0.5 ${isLight ? 'text-yellow-700' : 'text-yellow-300'}">
+                                        ${state.prioridadEscalada.map(x => `<li>Folio ${x.id} — prioridad cambió de ${x.de} a ${x.a}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            </div>
+                            <button type="button" onclick="cerrarBannerPrioridad()" title="Cerrar aviso" class="shrink-0 ${isLight ? 'text-yellow-600 hover:text-yellow-800' : 'text-yellow-400 hover:text-yellow-200'}">
+                                ${icons.x.replace('width="24"', 'width="18"').replace('height="24"', 'height="18"')}
+                            </button>
+                        </div>
+                    </div>
+                    ` : ''}
+
                     ${state.view === 'dashboard' ? renderDashboardHTML(aplicarFiltroDashboard(baseFv)) : `
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
                         <button type="button" onclick="filtrarPorTarjeta('total')" class="${claseTarjeta('total')}">
@@ -1792,9 +1934,9 @@
                             <div>
                                 <select id="filterPrioridad" class="w-full px-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500">
                                     <option value="Todas">Todas las Prioridades</option>
-                                    <option value="Alta">Alta</option>
-                                    <option value="Media">Media</option>
-                                    <option value="Baja">Baja</option>
+                                    <option value="ALTA">ALTA</option>
+                                    <option value="MEDIA">MEDIA</option>
+                                    <option value="BAJA">BAJA</option>
                                 </select>
                             </div>
                             <div>
