@@ -2440,8 +2440,11 @@
                             return;
                         }
 
-                        // Cargar vacante nueva. El estatus inicial siempre es VIGENTE;
-                        // a partir de ahí, solo el CRM2 puede cambiarlo.
+                        // Cargar vacante nueva. Si ya está referida en Joins, se
+                        // carga directo como PAUSADO (no requiere reclutamiento
+                        // activo); si no, el estatus inicial es VIGENTE. A partir
+                        // de ahí, solo el CRM2 puede cambiarlo.
+                        const estatusInicial = fd.get('vacanteReferida') === 'Sí' ? 'PAUSADO' : 'VIGENTE';
                         const nv = {
                             id: 'FOL' + String(state.vacancies.length + 1).padStart(4, '0'),
                             requerimiento: fd.get('requerimiento'),
@@ -2463,7 +2466,7 @@
                             fechaVencimiento: fd.get('fechaVencimiento'),
                             prioridad: fd.get('prioridad'),
                             viatica: fd.get('viatica'),
-                            estatusVacante: 'VIGENTE',
+                            estatusVacante: estatusInicial,
                             fechaCubierta: '',
                             usuarioCarga: state.currentUser ? state.currentUser.usuario : '',
                             nombreCarga: state.currentUser ? state.currentUser.nombre : ''
