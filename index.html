@@ -123,7 +123,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwdNSmaav4mqChHH3sCU1Na5InyPhdWpu2CL1Gc2F6-Zg04asVUmNMoZfF278rZfDIx/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzomXrIy4eesCCr1kqbBXBT0nwuCl121F6uTFeakNZuA5wE8wwOVapaSRnQhIegi_jL/exec';
 
             function enviarWhatsAppVacante(v) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -231,7 +231,11 @@
                         fechaCubierta: v.fechaCubierta || '',
                         usuarioCarga: v.usuarioCarga || '',
                         nombreCarga: v.nombreCarga || '',
-                        fechaNotificacion: new Date().toISOString()
+                        fechaNotificacion: new Date().toISOString(),
+                        viatica: v.viatica || '',
+                        vacanteReferida: v.vacanteReferida || '',
+                        referidoNombre: v.referidoNombre || '',
+                        referidoTelefono: v.referidoTelefono || ''
                     })
                 }).catch(err => console.error('Error al notificar al CRM2:', err));
             }
@@ -1224,7 +1228,12 @@
                     // Motivo capturado al reabrir la vacante (catálogo "MOTIVO REAPERTURA"),
                     // incluye valores como "No se presentó". Se lee de la hoja si el backend
                     // ya lo está guardando en una columna con alguno de estos nombres.
-                    motivoReapertura: row.MotivoReapertura || row['Motivo Reapertura'] || row.MotivoDeReapertura || ''
+                    motivoReapertura: row.MotivoReapertura || row['Motivo Reapertura'] || row.MotivoDeReapertura || '',
+                    // NUEVO (02/09/2026): Viática, Vacante Referida y datos del referido.
+                    viatica: row.Viatica || '',
+                    vacanteReferida: row.VacanteReferida || '',
+                    referidoNombre: row.ReferidoNombre || '',
+                    referidoTelefono: row.ReferidoTelefono || ''
                 };
             }
 
