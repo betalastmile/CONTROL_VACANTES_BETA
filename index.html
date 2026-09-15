@@ -123,7 +123,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbySv_RMpqWrkVj7nWXo7H8dG3A-CfRuYAoJDZfF87TIryoHO7DQt9b1CSZ9reoe0YMP/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwLGwXmDgfyIuavh0V_S-WUt4WzveVblRAREXLGDAWI7a22dWFYldCtXfBTc5HV2s3o/exec';
 
             function enviarWhatsAppVacante(v) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -142,7 +142,7 @@
                     `Fecha de solicitud: ${v.fechaSolicitud}\n` +
                     `Fecha límite de contratación: ${v.fechaVencimiento}\n` +
                     `La vacante esta ya referida en Joins: ${v.vacanteReferida || ''}` +
-                    `${v.vacanteReferida === 'Sí' ? `\nReferido: ${v.referidoNombre || ''} — ${v.referidoTelefono || ''}` : ''}\n` +
+                    `${v.vacanteReferida === 'Sí' ? `\nFolio de Join Us: ${v.referidoNombre || ''}` : ''}\n` +
                     `Observaciones Adicionales: ${v.requerimiento}`;
                 // Se abre WhatsApp sin número predefinido para que el usuario elija a quién enviarlo
                 window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
@@ -422,7 +422,7 @@
                 render();
             };
 
-            const estatusOptions = ['VIGENTE', 'CANCELADA', 'CUBIERTA', 'PAUSADO', 'FORMALIZADO', 'NEGOCIACION ALIADO EXTERNO', 'REGULARIZACION', 'VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
+            const estatusOptions = ['VIGENTE', 'CANCELADA', 'CUBIERTA', 'PAUSADO', 'PAUSADO JOIN US', 'FORMALIZADO', 'NEGOCIACION ALIADO EXTERNO', 'REGULARIZACION', 'VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
 
             function getPrioridadColor(prioridad) {
                 const colors = { 'ALTA': 'bg-red-100 text-red-800', 'MEDIA': 'bg-yellow-100 text-yellow-800', 'BAJA': 'bg-green-100 text-green-800' };
@@ -433,12 +433,12 @@
                 const isLight = state.theme === 'light';
                 const colorsDark = {
                     'VIGENTE': 'bg-blue-500 text-white', 'CANCELADA': 'bg-red-500 text-white', 'CUBIERTA': 'bg-gray-500 text-white',
-                    'PAUSADO': 'bg-yellow-500 text-white', 'FORMALIZADO': 'bg-green-500 text-white', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-500 text-white',
+                    'PAUSADO': 'bg-yellow-500 text-white', 'PAUSADO JOIN US': 'bg-amber-600 text-white', 'FORMALIZADO': 'bg-green-500 text-white', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-500 text-white',
                     'REGULARIZACION': 'bg-orange-500 text-white', 'VIGENTE-REAPERTURADO': 'bg-cyan-500 text-white', 'FORMALIZADO POR AP-POR REAPERTURA': 'bg-pink-500 text-white'
                 };
                 const colorsLight = {
                     'VIGENTE': 'bg-blue-100 text-blue-800', 'CANCELADA': 'bg-red-100 text-red-800', 'CUBIERTA': 'bg-gray-200 text-gray-700',
-                    'PAUSADO': 'bg-yellow-100 text-yellow-800', 'FORMALIZADO': 'bg-green-100 text-green-800', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-100 text-purple-800',
+                    'PAUSADO': 'bg-yellow-100 text-yellow-800', 'PAUSADO JOIN US': 'bg-amber-200 text-amber-900', 'FORMALIZADO': 'bg-green-100 text-green-800', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-100 text-purple-800',
                     'REGULARIZACION': 'bg-orange-100 text-orange-800', 'VIGENTE-REAPERTURADO': 'bg-cyan-100 text-cyan-800', 'FORMALIZADO POR AP-POR REAPERTURA': 'bg-pink-100 text-pink-800'
                 };
                 const colors = isLight ? colorsLight : colorsDark;
@@ -469,7 +469,7 @@
             // cuál tarjeta esté activa.
             function getFilteredVacanciesBase() {
                 return state.vacancies.filter(v => {
-                    const match = v.gerenteDirector.toLowerCase().includes(state.searchTerm.toLowerCase()) || v.cliente.toLowerCase().includes(state.searchTerm.toLowerCase());
+                    const match = (v.sucursal || '').toLowerCase().includes(state.searchTerm.toLowerCase()) || (v.formato || '').toLowerCase().includes(state.searchTerm.toLowerCase());
                     const matchE = state.filterEstatusVacante === 'Todos' || v.estatusVacante === state.filterEstatusVacante;
                     const matchP = state.filterPrioridad === 'Todas' || (v.prioridadEfectiva || v.prioridad) === state.filterPrioridad;
                     const matchG = state.filterGerencia === 'Todas' || v.gerenteDirector === state.filterGerencia;
@@ -542,7 +542,10 @@
                     'ESTATUS VACANTE': v.estatusVacante,
                     'DÍAS EN PROCESO': calcularDiasProceso(v) !== null ? calcularDiasProceso(v) : '',
                     'MOTIVO DE LA VACANTE': v.motivoVacante || '',
-                    'OBSERVACIONES ADICIONALES': v.requerimiento
+                    'OBSERVACIONES ADICIONALES': v.requerimiento,
+                    'FECHA DE CAPTURA CUBRIMIENTO DE VACANTE': fechaCorta(v.fechaCapturaCubrimiento),
+                    'FUENTE DE INGRESO': v.fuenteIngreso || '',
+                    'LINK FICHA CONTRATACION': v.linkFichaContratacion || ''
                 }));
                 const ws = XLSX.utils.json_to_sheet(filas);
                 ws['!cols'] = Object.keys(filas[0]).map(k => ({ wch: Math.max(k.length, 14) }));
@@ -861,7 +864,8 @@
                 proyecto: 'Proyecto',
                 motivoReapertura: 'Motivo de Reapertura',
                 viatica: 'Genera Viáticos para cubrir la vacante',
-                vacanteReferida: 'La vacante esta ya referida en Joins'
+                vacanteReferida: 'La vacante esta ya referida en Joins',
+                fuenteIngreso: 'Fuente de Ingreso'
             };
 
             // Activa/desactiva el filtro cruzado del dashboard. Si ya estaba activo
@@ -1064,6 +1068,12 @@
                             <div style="height:280px"><canvas id="chartReferida"></canvas></div>
                         </div>
                     </div>
+                    <div class="mb-6 grid grid-cols-1 gap-4">
+                        <div class="${cont} p-4 rounded-lg shadow-lg border">
+                            <p class="text-white font-semibold mb-3">Fuente de Ingreso</p>
+                            <div style="height:300px"><canvas id="chartFuenteIngreso"></canvas></div>
+                        </div>
+                    </div>
                 `;
             }
 
@@ -1197,6 +1207,17 @@
                     });
                 }
 
+                // --- Fuente de Ingreso ---
+                const porFuenteIngreso = topPorCampo(vacantes, 'fuenteIngreso', 8);
+                const ctxFuenteIngreso = document.getElementById('chartFuenteIngreso');
+                if (ctxFuenteIngreso && porFuenteIngreso.length) {
+                    dashboardCharts.fuenteIngreso = new Chart(ctxFuenteIngreso, {
+                        type: 'bar',
+                        data: { labels: porFuenteIngreso.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porFuenteIngreso.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[6 % PALETA_GRAFICAS.length], datalabels: DATALABELS_CONTEO }] },
+                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('fuenteIngreso'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+                    });
+                }
+
                 // --- Por ciudad ---
                 const porCiudad = topPorCampo(vacantes, 'ciudad', 8);
                 const ctxCiudad = document.getElementById('chartCiudad');
@@ -1300,7 +1321,11 @@
                     viatica: row.Viatica || '',
                     vacanteReferida: row.VacanteReferida || '',
                     referidoNombre: row.ReferidoNombre || '',
-                    referidoTelefono: row.ReferidoTelefono || ''
+                    referidoTelefono: row.ReferidoTelefono || '',
+                    // NUEVO: Fecha de Captura de Cubrimiento, Fuente de Ingreso y Link de Ficha de Contratación.
+                    fechaCapturaCubrimiento: row.FechaCapturaCubrimientoVacante || row['Fecha de Captura Cubrimiento de Vacante'] || row['FECHA DE CAPTURA CUBRIMIENTO DE VACANTE'] || '',
+                    fuenteIngreso: row.FuenteIngreso || row['Fuente de Ingreso'] || row['FUENTE DE INGRESO'] || '',
+                    linkFichaContratacion: row.LinkFichaContratacion || row['Link Ficha Contratacion'] || row['LINK FICHA CONTRATACION'] || ''
                 };
             }
 
@@ -1817,6 +1842,16 @@
                 const tablaScrollTop = tablaScrollPrev ? tablaScrollPrev.scrollTop : 0;
                 const tablaScrollLeft = tablaScrollPrev ? tablaScrollPrev.scrollLeft : 0;
                 const windowScrollY = window.scrollY;
+                // Guardamos qué elemento tenía el foco (y la posición del cursor si es
+                // un input de texto) antes de reemplazar el HTML, porque al recrear el
+                // DOM el elemento anterior se destruye y el navegador quita el foco
+                // (obligando a volver a dar clic para seguir escribiendo, por ejemplo
+                // en el buscador).
+                const elementoConFoco = document.activeElement;
+                const idConFoco = elementoConFoco && elementoConFoco.id ? elementoConFoco.id : null;
+                const seleccionConFoco = (idConFoco && typeof elementoConFoco.selectionStart === 'number')
+                    ? { start: elementoConFoco.selectionStart, end: elementoConFoco.selectionEnd }
+                    : null;
                 document.getElementById('app').innerHTML = `
                     <div class="mb-6 flex items-center justify-between">
                         <div>
@@ -1930,7 +1965,7 @@
                             <div class="sm:col-span-2">
                                 <div class="relative">
                                     <div class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">${icons.search}</div>
-                                    <input type="text" id="searchInput" placeholder="Buscar por gerente o cliente..." value="${state.searchTerm}" class="w-full pl-10 pr-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
+                                    <input type="text" id="searchInput" placeholder="Buscar por tienda o formato..." value="${state.searchTerm}" class="w-full pl-10 pr-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
                                 </div>
                             </div>
                             <div>
@@ -1994,6 +2029,9 @@
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">DÍAS EN PROCESO</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">MOTIVO DE LA VACANTE</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">OBSERVACIONES ADICIONALES</th>
+                                        <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FECHA DE CAPTURA CUBRIMIENTO DE VACANTE</th>
+                                        <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FUENTE DE INGRESO</th>
+                                        <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">LINK FICHA CONTRATACION</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -2027,6 +2065,9 @@
                                             </td>
                                             <td class="px-4 py-3 text-sm text-gray-300">${v.motivoVacante || ''}</td>
                                             <td class="px-4 py-3 text-sm text-gray-300">${v.requerimiento}</td>
+                                            <td class="px-4 py-3 text-sm text-gray-300">${fechaCorta(v.fechaCapturaCubrimiento)}</td>
+                                            <td class="px-4 py-3 text-sm text-gray-300">${v.fuenteIngreso || ''}</td>
+                                            <td class="px-4 py-3 text-sm text-gray-300">${v.linkFichaContratacion ? `<a href="${v.linkFichaContratacion}" target="_blank" rel="noopener" class="text-blue-400 hover:underline">Ver ficha</a>` : ''}</td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -2109,16 +2150,8 @@
                                             </select>
                                         </div>
                                         <div class="col-span-2 hidden" id="referidoDatosWrapper">
-                                            <div class="grid grid-cols-2 gap-4">
-                                                <div>
-                                                    <label class="block text-gray-300 text-sm mb-2">Nombre de la persona referida</label>
-                                                    <input type="text" name="referidoNombre" id="referidoNombreInput" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
-                                                </div>
-                                                <div>
-                                                    <label class="block text-gray-300 text-sm mb-2">Teléfono de la persona referida</label>
-                                                    <input type="text" name="referidoTelefono" id="referidoTelefonoInput" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
-                                                </div>
-                                            </div>
+                                            <label class="block text-gray-300 text-sm mb-2">Folio de Join Us</label>
+                                            <input type="text" name="referidoNombre" id="referidoNombreInput" class="w-full px-3 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg" />
                                         </div>
                                         <div class="col-span-2">
                                             <label class="block text-gray-300 text-sm mb-2">Observaciones Adicionales</label>
@@ -2296,6 +2329,19 @@
                 }
                 window.scrollTo(0, windowScrollY);
 
+                // Restauramos el foco (y la posición del cursor) en el elemento que
+                // lo tenía antes de repintar, para que el usuario pueda seguir
+                // escribiendo sin tener que volver a dar clic.
+                if (idConFoco) {
+                    const elementoRestaurado = document.getElementById(idConFoco);
+                    if (elementoRestaurado) {
+                        elementoRestaurado.focus();
+                        if (seleccionConFoco && typeof elementoRestaurado.setSelectionRange === 'function') {
+                            elementoRestaurado.setSelectionRange(seleccionConFoco.start, seleccionConFoco.end);
+                        }
+                    }
+                }
+
                 const form = document.getElementById('newForm');
                 if (form) {
                     const sucursalBuscarInput = document.getElementById('sucursalBuscarInput');
@@ -2362,16 +2408,13 @@
                     const vacanteReferidaSelect = document.getElementById('vacanteReferidaSelect');
                     const referidoDatosWrapper = document.getElementById('referidoDatosWrapper');
                     const referidoNombreInput = document.getElementById('referidoNombreInput');
-                    const referidoTelefonoInput = document.getElementById('referidoTelefonoInput');
                     function actualizarCamposReferido() {
                         if (!vacanteReferidaSelect || !referidoDatosWrapper) return;
                         const esReferida = vacanteReferidaSelect.value === 'Sí';
                         referidoDatosWrapper.classList.toggle('hidden', !esReferida);
                         if (referidoNombreInput) referidoNombreInput.required = esReferida;
-                        if (referidoTelefonoInput) referidoTelefonoInput.required = esReferida;
                         if (!esReferida) {
                             if (referidoNombreInput) referidoNombreInput.value = '';
-                            if (referidoTelefonoInput) referidoTelefonoInput.value = '';
                         }
                     }
                     if (vacanteReferidaSelect) {
@@ -2441,16 +2484,15 @@
                         }
 
                         // Cargar vacante nueva. Si ya está referida en Joins, se
-                        // carga directo como PAUSADO (no requiere reclutamiento
+                        // carga directo como PAUSADO JOIN US (no requiere reclutamiento
                         // activo); si no, el estatus inicial es VIGENTE. A partir
                         // de ahí, solo el CRM2 puede cambiarlo.
-                        const estatusInicial = fd.get('vacanteReferida') === 'Sí' ? 'PAUSADO' : 'VIGENTE';
+                        const estatusInicial = fd.get('vacanteReferida') === 'Sí' ? 'PAUSADO JOIN US' : 'VIGENTE';
                         const nv = {
                             id: 'FOL' + String(state.vacancies.length + 1).padStart(4, '0'),
                             requerimiento: fd.get('requerimiento'),
                             vacanteReferida: fd.get('vacanteReferida'),
                             referidoNombre: fd.get('referidoNombre'),
-                            referidoTelefono: fd.get('referidoTelefono'),
                             vacante: fd.get('vacante'),
                             gerenteDirector: fd.get('gerenteDirector'),
                             idTienda: fd.get('idTienda'),
