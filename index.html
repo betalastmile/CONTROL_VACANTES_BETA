@@ -317,8 +317,11 @@
             let state = {
                 vacancies: [...mockData],
                 view: 'vacantes',   // 'vacantes' | 'dashboard'
-                dashboardFiltro: null,   // { campo, valor } — filtro cruzado activado al hacer clic en una gráfica del dashboard
+                dashboardFiltros: [],   // [{ campo, valor }] — selección múltiple al hacer clic en las gráficas: mismo campo = O (varios valores), campos distintos = Y
+                dashboardCampoSeries: null,   // campo con 2+ valores elegidos: el resto de las gráficas lo muestra "por separado" (una serie por valor)
+                dashboardMetricaTendencia: 'nuevas',   // 'nuevas' | 'cubiertas' | 'canceladas' — métrica de la tendencia cuando hay series por valor
                 dashboardPeriodo: 'mes',   // 'semana' | 'quincena' | 'mes' — granularidad de las gráficas de tendencia del dashboard
+                dashboardPeriodoSel: null,   // clave del periodo específico elegido (ej. '2026-09', '2026-W38', '2026-09-Q1'); null = todos los periodos
                 searchTerm: '',
                 filterEstatusVacante: 'Todos',
                 filterPrioridad: 'Todas',
@@ -469,7 +472,8 @@
             // cuál tarjeta esté activa.
             function getFilteredVacanciesBase() {
                 return state.vacancies.filter(v => {
-                    const match = (v.sucursal || '').toLowerCase().includes(state.searchTerm.toLowerCase()) || (v.formato || '').toLowerCase().includes(state.searchTerm.toLowerCase());
+                    const termino = state.searchTerm.toLowerCase();
+                    const match = [v.sucursal, v.formato, v.ciudad].some(campo => (campo || '').toString().toLowerCase().includes(termino));
                     const matchE = state.filterEstatusVacante === 'Todos' || v.estatusVacante === state.filterEstatusVacante;
                     const matchP = state.filterPrioridad === 'Todas' || (v.prioridadEfectiva || v.prioridad) === state.filterPrioridad;
                     const matchG = state.filterGerencia === 'Todas' || v.gerenteDirector === state.filterGerencia;
@@ -868,32 +872,148 @@
                 fuenteIngreso: 'Fuente de Ingreso'
             };
 
-            // Activa/desactiva el filtro cruzado del dashboard. Si ya estaba activo
-            // ese mismo campo+valor (clic de nuevo sobre lo mismo), lo quita.
+            // Máximo de valores seleccionables a la vez (uno por color de la paleta).
+            function maxSeleccionDashboard() { return PALETA_GRAFICAS.length; }
+
+            // Valores seleccionados de un campo (ej. las ciudades marcadas).
+            function valoresFiltroDe(campo) {
+                return state.dashboardFiltros.filter(f => f.campo === campo).map(f => f.valor);
+            }
+
+            // ¿Hay un campo con 2+ valores elegidos? Entonces las gráficas se separan en series.
+            function modoSeriesActivo() {
+                const c = state.dashboardCampoSeries;
+                return !!c && valoresFiltroDe(c).length >= 2;
+            }
+
+            // Decide qué campo separa las series: el último que llegó a tener 2+ valores.
+            function actualizarCampoSeries(campoTocado) {
+                const campos = Array.from(new Set(state.dashboardFiltros.map(f => f.campo)));
+                const multiples = campos.filter(c => valoresFiltroDe(c).length >= 2);
+                if (multiples.includes(campoTocado)) {
+                    state.dashboardCampoSeries = campoTocado;
+                } else if (!multiples.includes(state.dashboardCampoSeries)) {
+                    state.dashboardCampoSeries = multiples.length ? multiples[multiples.length - 1] : null;
+                }
+            }
+
+            // Agrega o quita un valor de la selección (clic en una barra/segmento o en su "x").
+            // Varios valores del mismo campo se suman (O); campos distintos se combinan (Y).
             window.filtrarDashboardPor = function(campo, valor) {
-                const f = state.dashboardFiltro;
-                state.dashboardFiltro = (f && f.campo === campo && f.valor === valor) ? null : { campo, valor };
+                const yaEsta = state.dashboardFiltros.some(f => f.campo === campo && f.valor === valor);
+                if (yaEsta) {
+                    state.dashboardFiltros = state.dashboardFiltros.filter(f => !(f.campo === campo && f.valor === valor));
+                } else {
+                    if (valoresFiltroDe(campo).length >= maxSeleccionDashboard()) return;
+                    state.dashboardFiltros = [...state.dashboardFiltros, { campo, valor }];
+                }
+                actualizarCampoSeries(campo);
                 render();
             };
 
+            // Quita toda la selección del dashboard.
             window.quitarFiltroDashboard = function() {
-                state.dashboardFiltro = null;
+                state.dashboardFiltros = [];
+                state.dashboardCampoSeries = null;
                 render();
             };
+
+            // Métrica que se dibuja en la tendencia cuando hay una serie por valor seleccionado.
+            const NOMBRES_METRICA = { nuevas: 'Nuevas', cubiertas: 'Cubiertas', canceladas: 'Canceladas' };
+            window.cambiarMetricaTendencia = function(metrica) {
+                if (!NOMBRES_METRICA[metrica]) return;
+                state.dashboardMetricaTendencia = metrica;
+                render();
+            };
+
+            function escHtmlDash(t) {
+                return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
 
             // Cambia la granularidad ('semana' | 'quincena' | 'mes') de las gráficas
             // de tendencia del dashboard.
             window.cambiarPeriodoDashboard = function(periodo) {
                 if (!NOMBRES_PERIODO[periodo]) return;
                 state.dashboardPeriodo = periodo;
+                // Las claves de un periodo (semana/quincena/mes) no sirven en otra
+                // granularidad, así que se limpia la selección específica.
+                state.dashboardPeriodoSel = null;
                 render();
             };
 
-            // Aplica el filtro cruzado (si hay alguno activo) sobre una lista de vacantes.
-            function aplicarFiltroDashboard(lista) {
-                if (!state.dashboardFiltro) return lista;
-                const { campo, valor } = state.dashboardFiltro;
-                return lista.filter(v => valorNormalizado(v, campo) === valor);
+            // Elige un periodo específico ('' = todos). Filtra KPIs y todas las gráficas.
+            window.seleccionarPeriodoDashboard = function(clave) {
+                state.dashboardPeriodoSel = clave || null;
+                render();
+            };
+
+            // Rango legible de una semana ISO: '2026-W38' -> '14 Sep – 20 Sep'.
+            function rangoSemanaISO(clave) {
+                const [anio, semana] = clave.split('-W').map(Number);
+                const ene4 = new Date(Date.UTC(anio, 0, 4));
+                const lunes = new Date(ene4);
+                lunes.setUTCDate(ene4.getUTCDate() - ((ene4.getUTCDay() + 6) % 7) + (semana - 1) * 7);
+                const domingo = new Date(lunes);
+                domingo.setUTCDate(lunes.getUTCDate() + 6);
+                const f = d => `${d.getUTCDate()} ${NOMBRES_MES[d.getUTCMonth()]}`;
+                return `${f(lunes)} – ${f(domingo)}`;
+            }
+
+            // Etiqueta para el selector de periodo (las semanas incluyen su rango de fechas).
+            function etiquetaPeriodoLarga(clave, periodo) {
+                const base = etiquetaPeriodo(clave, periodo);
+                return periodo === 'semana' ? `${base} (${rangoSemanaISO(clave)})` : base;
+            }
+
+            // Periodos disponibles (según fecha de solicitud), del más reciente al más antiguo.
+            function clavesPeriodosDisponibles(vacantes, periodo) {
+                const set = new Set();
+                vacantes.forEach(v => {
+                    if (!v.fechaSolicitud) return;
+                    const clave = claveDePeriodo(String(v.fechaSolicitud).split('T')[0], periodo);
+                    if (clave) set.add(clave);
+                });
+                return Array.from(set).sort().reverse();
+            }
+
+            // Si hay un periodo específico elegido, deja solo las vacantes cuya
+            // fecha de solicitud cae dentro de ese periodo.
+            function aplicarFiltroPeriodoDashboard(lista) {
+                const sel = state.dashboardPeriodoSel;
+                if (!sel) return lista;
+                const periodo = state.dashboardPeriodo || 'mes';
+                return lista.filter(v => {
+                    if (!v.fechaSolicitud) return false;
+                    return claveDePeriodo(String(v.fechaSolicitud).split('T')[0], periodo) === sel;
+                });
+            }
+
+            // Aplica la selección del dashboard sobre una lista de vacantes: valores del
+            // mismo campo se suman (O) y campos distintos se combinan (Y). Con
+            // excluirCampo se ignora la selección de ese campo (así su propia gráfica
+            // sigue mostrando todas las opciones y se pueden marcar más).
+            function aplicarFiltroDashboard(lista, excluirCampo = null) {
+                const porCampo = {};
+                state.dashboardFiltros.forEach(f => {
+                    if (f.campo === excluirCampo) return;
+                    if (!porCampo[f.campo]) porCampo[f.campo] = [];
+                    porCampo[f.campo].push(f.valor);
+                });
+                const campos = Object.keys(porCampo);
+                if (!campos.length) return lista;
+                return lista.filter(v => campos.every(c => porCampo[c].includes(valorNormalizado(v, c))));
+            }
+
+            // Series para "mostrar por separado": una por cada valor elegido del campo de
+            // comparación (con su color). Sin comparación hay una sola serie con todo.
+            function seriesDashboard(lista) {
+                if (!modoSeriesActivo()) return [{ nombre: 'Vacantes', color: null, vacantes: lista }];
+                const campo = state.dashboardCampoSeries;
+                return valoresFiltroDe(campo).map((val, i) => ({
+                    nombre: val,
+                    color: PALETA_GRAFICAS[i % PALETA_GRAFICAS.length],
+                    vacantes: lista.filter(v => valorNormalizado(v, campo) === val)
+                }));
             }
 
             // Promedio de días en proceso, solo de vacantes ya CUBIERTAS (tiempo real de cobertura).
@@ -953,46 +1073,99 @@
                         ${sub ? `<p class="text-gray-500 text-xs mt-1">${sub}</p>` : ''}
                     </div>`;
 
-                const f = state.dashboardFiltro;
+                const f = state.dashboardFiltros;
                 const botonImprimir = `
                     <div class="mb-4 flex items-center justify-between no-imprimir">
-                        <span class="text-xs text-gray-500">${f ? '' : 'Tip: haz clic en una barra o segmento (estatus, prioridad, ciudad, cliente, gerente) para filtrar todo el dashboard por ese dato. Haz clic de nuevo para quitarlo.'}</span>
+                        <span class="text-xs text-gray-500">${f.length ? '' : 'Tip: haz clic en una o varias barras/segmentos para filtrar todo el dashboard. Con 2 o más valores del mismo dato, las demás gráficas los muestran por separado (un color por valor). Haz clic de nuevo para quitar uno.'}</span>
                         <button type="button" onclick="window.print()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                             ${icons.download} Descargar / Imprimir PDF
                         </button>
                     </div>`;
-                const badgeFiltro = f ? `
-                    <div class="mb-4 flex items-center gap-2 text-sm">
-                        <span class="text-gray-400">Filtro activo:</span>
-                        <span class="px-3 py-1 rounded-full bg-blue-600 text-white flex items-center gap-2">
-                            ${NOMBRES_CAMPO_DASHBOARD[f.campo] || f.campo}: ${f.valor}
-                            <button type="button" onclick="quitarFiltroDashboard()" class="hover:text-gray-200 no-imprimir" title="Quitar filtro">${icons.x.replace('width="24"', 'width="14"').replace('height="24"', 'height="14"')}</button>
-                        </span>
+                const camposFiltrados = Array.from(new Set(f.map(x => x.campo)));
+                const iconoX = icons.x.replace('width="24"', 'width="14"').replace('height="24"', 'height="14"');
+                const badgeFiltro = f.length ? `
+                    <div class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                        <span class="text-gray-400">Filtros activos:</span>
+                        ${camposFiltrados.map(c => `
+                            <span class="flex flex-wrap items-center gap-1.5">
+                                <span class="text-gray-400">${escHtmlDash(NOMBRES_CAMPO_DASHBOARD[c] || c)}:</span>
+                                ${valoresFiltroDe(c).map((val, i) => {
+                                    const color = (c === state.dashboardCampoSeries && modoSeriesActivo()) ? PALETA_GRAFICAS[i % PALETA_GRAFICAS.length] : '#2563eb';
+                                    return `<span class="px-3 py-1 rounded-full text-white flex items-center gap-2" style="background:${color}">
+                                        ${escHtmlDash(val)}
+                                        <button type="button" onclick="filtrarDashboardPor(${escHtmlDash(JSON.stringify(c))}, ${escHtmlDash(JSON.stringify(val))})" class="hover:text-gray-200 no-imprimir" title="Quitar">${iconoX}</button>
+                                    </span>`;
+                                }).join('')}
+                            </span>
+                        `).join('')}
+                        <button type="button" onclick="quitarFiltroDashboard()" class="text-blue-400 hover:underline no-imprimir">Limpiar todo</button>
                     </div>
                 ` : '';
 
                 const periodoActual = state.dashboardPeriodo || 'mes';
+                const periodoSel = state.dashboardPeriodoSel;
+                const clavesDisponibles = clavesPeriodosDisponibles(state.vacancies, periodoActual);
+                const opcionesPeriodo = (periodoSel && !clavesDisponibles.includes(periodoSel)) ? [periodoSel, ...clavesDisponibles] : clavesDisponibles;
+                const claseSelect = isLight ? 'bg-white border-gray-300 text-gray-800' : 'bg-[#0a0a0a] border-gray-700 text-white';
                 const selectorPeriodo = `
-                    <div class="flex items-center gap-2 no-imprimir">
-                        <span class="text-gray-400 text-sm">Ver tendencia por:</span>
-                        <div class="flex rounded-lg overflow-hidden border ${isLight ? 'border-gray-300' : 'border-gray-700'}">
-                            ${Object.keys(NOMBRES_PERIODO).map(p => `
-                                <button type="button" onclick="cambiarPeriodoDashboard('${p}')"
-                                    class="px-3 py-1.5 text-sm transition-colors ${p === periodoActual
-                                        ? 'bg-blue-600 text-white'
-                                        : (isLight ? 'bg-white text-gray-600 hover:bg-gray-100' : 'bg-[#1a1a1a] text-gray-300 hover:bg-[#252525]')}">
-                                    ${NOMBRES_PERIODO[p]}
-                                </button>
-                            `).join('')}
+                    <div class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 no-imprimir">
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-400 text-sm">Agrupar por:</span>
+                            <div class="flex rounded-lg overflow-hidden border ${isLight ? 'border-gray-300' : 'border-gray-700'}">
+                                ${Object.keys(NOMBRES_PERIODO).map(p => `
+                                    <button type="button" onclick="cambiarPeriodoDashboard('${p}')"
+                                        class="px-3 py-1.5 text-sm transition-colors ${p === periodoActual
+                                            ? 'bg-blue-600 text-white'
+                                            : (isLight ? 'bg-white text-gray-600 hover:bg-gray-100' : 'bg-[#1a1a1a] text-gray-300 hover:bg-[#252525]')}">
+                                        ${NOMBRES_PERIODO[p]}
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-400 text-sm">Periodo:</span>
+                            <select onchange="seleccionarPeriodoDashboard(this.value)" class="px-3 py-1.5 text-sm rounded-lg border ${claseSelect}">
+                                <option value="">Todos los periodos</option>
+                                ${opcionesPeriodo.map(k => `<option value="${k}" ${k === periodoSel ? 'selected' : ''}>${etiquetaPeriodoLarga(k, periodoActual)}</option>`).join('')}
+                            </select>
                         </div>
                     </div>`;
+                const badgePeriodo = periodoSel ? `
+                    <div class="mb-4 flex items-center gap-2 text-sm">
+                        <span class="text-gray-400">Periodo:</span>
+                        <span class="px-3 py-1 rounded-full bg-blue-600 text-white flex items-center gap-2">
+                            ${etiquetaPeriodoLarga(periodoSel, periodoActual)}
+                            <button type="button" onclick="seleccionarPeriodoDashboard('')" class="hover:text-gray-200 no-imprimir" title="Quitar periodo">${icons.x.replace('width="24"', 'width="14"').replace('height="24"', 'height="14"')}</button>
+                        </span>
+                    </div>
+                ` : '';
+
+                const hayComparacion = modoSeriesActivo();
+                const metricaActual = state.dashboardMetricaTendencia || 'nuevas';
+                const tituloTendencia = hayComparacion
+                    ? `Tendencia (${NOMBRES_PERIODO[periodoActual]}): ${NOMBRES_METRICA[metricaActual]} por ${NOMBRES_CAMPO_DASHBOARD[state.dashboardCampoSeries] || state.dashboardCampoSeries}`
+                    : `Tendencia (${NOMBRES_PERIODO[periodoActual]}): Nuevas vs Cubiertas vs Canceladas`;
+                const selectorMetrica = hayComparacion ? `
+                    <div class="flex rounded-lg overflow-hidden border no-imprimir ${isLight ? 'border-gray-300' : 'border-gray-700'}">
+                        ${Object.keys(NOMBRES_METRICA).map(m => `
+                            <button type="button" onclick="cambiarMetricaTendencia('${m}')"
+                                class="px-3 py-1.5 text-sm transition-colors ${m === metricaActual
+                                    ? 'bg-blue-600 text-white'
+                                    : (isLight ? 'bg-white text-gray-600 hover:bg-gray-100' : 'bg-[#1a1a1a] text-gray-300 hover:bg-[#252525]')}">
+                                ${NOMBRES_METRICA[m]}
+                            </button>
+                        `).join('')}
+                    </div>` : '';
 
                 return `
                     ${botonImprimir}
+                    ${selectorPeriodo}
                     ${badgeFiltro}
+                    ${badgePeriodo}
                     <div id="avisoChartCdn" class="hidden mb-4 rounded-lg border p-3 text-sm no-imprimir ${isLight ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-amber-950/40 border-amber-800 text-amber-300'}">
                         No se pudieron cargar las gráficas (la librería Chart.js no se descargó). Verifica tu conexión a internet o si tu red bloquea cdn.jsdelivr.net; los porcentajes de arriba sí son correctos aunque las gráficas no se dibujen.
                     </div>
+                    ${total === 0 ? `<div class="mb-4 rounded-lg border p-3 text-sm ${isLight ? 'bg-gray-50 border-gray-200 text-gray-600' : 'bg-[#1a1a1a] border-gray-800 text-gray-400'}">No hay vacantes para el periodo / filtros seleccionados.</div>` : ''}
                     <div class="mb-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                         ${kpi('Total de Vacantes', total)}
                         ${kpi('% Cubiertas', `${pct(nCubiertas)}%`, `${nCubiertas} vacantes`)}
@@ -1005,8 +1178,8 @@
                     <div class="mb-6 grid grid-cols-1 lg:grid-cols-1 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-                                <p class="text-white font-semibold">Tendencia (${NOMBRES_PERIODO[periodoActual]}): Nuevas vs Cubiertas vs Canceladas</p>
-                                ${selectorPeriodo}
+                                <p class="text-white font-semibold">${tituloTendencia}</p>
+                                ${selectorMetrica}
                             </div>
                             <div style="height:300px"><canvas id="chartTendencia"></canvas></div>
                         </div>
@@ -1111,7 +1284,110 @@
                 };
             }
 
-            function dibujarGraficasDashboard(vacantes) {
+            // Etiquetas de datos más compactas para barras agrupadas (una serie por valor).
+            const DATALABELS_SERIES = { ...DATALABELS_CONTEO, font: { weight: 'bold', size: 10 }, formatter: v => (v ? v : '') };
+
+            // Prepara los datos de una gráfica categórica (por ciudad, estatus, etc.):
+            // - si su propio campo tiene selección, se calcula sin ese filtro para que sigan
+            //   apareciendo todas las opciones (las no elegidas se atenúan);
+            // - si hay un campo de comparación (2+ valores), devuelve una serie por valor.
+            function prepararGraficaCategorica(cfg, basePeriodo) {
+                const propios = valoresFiltroDe(cfg.campo);
+                const hayPropio = propios.length > 0;
+                let lista = aplicarFiltroDashboard(basePeriodo, hayPropio ? cfg.campo : null);
+                if (cfg.filtrarLista) lista = cfg.filtrarLista(lista);
+                const esCampoSeries = modoSeriesActivo() && state.dashboardCampoSeries === cfg.campo;
+
+                const top = topPorCampo(lista, cfg.campo, cfg.n);
+                propios.forEach(val => {
+                    if (!top.some(x => x[0] === val)) {
+                        top.push([val, lista.filter(v => valorNormalizado(v, cfg.campo) === val).length]);
+                    }
+                });
+                const labels = top.map(x => x[0]);
+
+                const series = esCampoSeries ? [{ nombre: 'Vacantes', color: null, vacantes: lista }] : seriesDashboard(lista);
+                const datasets = series.map(sr => {
+                    const mapa = {};
+                    sr.vacantes.forEach(v => {
+                        const val = valorNormalizado(v, cfg.campo);
+                        mapa[val] = (mapa[val] || 0) + 1;
+                    });
+                    return { nombre: sr.nombre, color: sr.color, data: labels.map(l => mapa[l] || 0) };
+                });
+                return { labels, datasets, propios, hayPropio, esCampoSeries };
+            }
+
+            function dibujarGraficaCategorica(cfg, basePeriodo) {
+                const canvas = document.getElementById(cfg.canvasId);
+                if (!canvas) return;
+                const prep = prepararGraficaCategorica(cfg, basePeriodo);
+                if (!prep.labels.length) return;
+
+                const { labels, datasets: dsPrep, propios, hayPropio, esCampoSeries } = prep;
+                const enSeries = dsPrep.length > 1;
+                const paleta = PALETA_GRAFICAS;
+                const estaSel = l => !hayPropio || propios.includes(l);
+                const DIM = '55';   // transparencia para lo que no está seleccionado
+                const colorSerieDe = l => { const j = propios.indexOf(l); return j >= 0 ? paleta[j % paleta.length] : '#64748B' + DIM; };
+                const interaccion = {
+                    onClick: alHacerClicEnGrafica(cfg.campo),
+                    onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; }
+                };
+
+                // Dona de una sola serie (comportamiento habitual).
+                if (cfg.tipo === 'dona' && !enSeries) {
+                    const colores = labels.map((l, i) => {
+                        if (esCampoSeries) return colorSerieDe(l);
+                        const c = paleta[i % paleta.length];
+                        return estaSel(l) ? c : c + DIM;
+                    });
+                    dashboardCharts[cfg.clave] = new Chart(canvas, {
+                        type: 'doughnut',
+                        data: { labels, datasets: [{ data: dsPrep[0].data, backgroundColor: colores, datalabels: DATALABELS_CONTEO }] },
+                        options: { ...opcionesBaseChart({ scales: {} }), ...interaccion }
+                    });
+                    return;
+                }
+
+                // Barras: horizontales (por ciudad, cliente...) o verticales agrupadas
+                // (dona que pasa a barras cuando hay una serie por valor).
+                const horizontal = cfg.tipo !== 'dona';
+                const datasets = dsPrep.map(ds => {
+                    let bg;
+                    if (enSeries) bg = labels.map(l => estaSel(l) ? ds.color : ds.color + DIM);
+                    else if (esCampoSeries) bg = labels.map(colorSerieDe);
+                    else bg = labels.map(l => estaSel(l) ? cfg.color : cfg.color + DIM);
+                    return {
+                        label: enSeries ? ds.nombre : (cfg.etiqueta || 'Vacantes'),
+                        data: ds.data,
+                        backgroundColor: bg,
+                        datalabels: enSeries ? DATALABELS_SERIES : DATALABELS_CONTEO
+                    };
+                });
+                const pluginsExtra = { legend: { display: enSeries, labels: { color: coloresTema().texto } } };
+                if (enSeries) {
+                    pluginsExtra.tooltip = { callbacks: { label: c => {
+                        const total = (c.dataset.data || []).reduce((a, b) => a + b, 0);
+                        const pct = total ? Math.round((c.raw / total) * 100) : 0;
+                        return `${c.dataset.label}: ${c.raw} (${pct}% de esta serie)`;
+                    } } };
+                }
+                // Con varias series, la gráfica horizontal crece para que las barras no se amontonen.
+                if (enSeries && horizontal && canvas.parentElement) {
+                    const base = parseInt(canvas.parentElement.style.height, 10) || 300;
+                    canvas.parentElement.style.height = Math.max(base, labels.length * (dsPrep.length * 16 + 12) + 50) + 'px';
+                }
+                dashboardCharts[cfg.clave] = new Chart(canvas, {
+                    type: 'bar',
+                    data: { labels, datasets },
+                    options: { ...opcionesBaseChart({ plugins: pluginsExtra }), ...(horizontal ? { indexAxis: 'y' } : {}), ...interaccion }
+                });
+            }
+
+            // basePeriodo: vacantes (búsqueda/selects + periodo elegido) SIN la selección de las gráficas.
+            // baseSinPeriodo: lo mismo pero sin acotar por periodo (para que la tendencia muestre toda la línea de tiempo).
+            function dibujarGraficasDashboard(basePeriodo, baseSinPeriodo = basePeriodo) {
                 destruirGraficasDashboard();
                 const avisoCdn = document.getElementById('avisoChartCdn');
                 if (typeof Chart === 'undefined') {
@@ -1122,15 +1398,30 @@
                 if (avisoCdn) avisoCdn.classList.add('hidden');
                 if (typeof ChartDataLabels !== 'undefined') Chart.register(ChartDataLabels);
 
-                // --- Tendencia (semana / quincena / mes, según selector del dashboard) ---
+                // --- Tendencia (semana / quincena / mes). Con 2+ valores elegidos: una línea por valor ---
                 const periodo = state.dashboardPeriodo || 'mes';
-                const porPeriodoNuevas = agruparPorPeriodo(vacantes, 'fechaSolicitud', periodo);
-                const porPeriodoCubiertas = agruparPorPeriodo(vacantes.filter(v => v.estatusVacante === 'CUBIERTA'), 'fechaCubierta', periodo);
-                const porPeriodoCanceladas = agruparPorPeriodo(vacantes.filter(v => v.estatusVacante === 'CANCELADA'), 'fechaSolicitud', periodo);
-                const clavesPeriodos = ultimosPeriodosClaves([porPeriodoNuevas, porPeriodoCubiertas, porPeriodoCanceladas], periodo === 'semana' ? 12 : 8);
+                const listaTendencia = aplicarFiltroDashboard(baseSinPeriodo);
+                const seriesTendencia = seriesDashboard(listaTendencia);
+                const enSeriesTendencia = seriesTendencia.length > 1;
+                const metrica = state.dashboardMetricaTendencia || 'nuevas';
+                const agruparMetrica = (lista, m) => {
+                    if (m === 'cubiertas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CUBIERTA'), 'fechaCubierta', periodo);
+                    if (m === 'canceladas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CANCELADA'), 'fechaSolicitud', periodo);
+                    return agruparPorPeriodo(lista, 'fechaSolicitud', periodo);
+                };
+                const lineas = enSeriesTendencia
+                    ? seriesTendencia.map(sr => ({ nombre: sr.nombre, color: sr.color, mapa: agruparMetrica(sr.vacantes, metrica) }))
+                    : [
+                        { nombre: 'Nuevas', color: PALETA_GRAFICAS[0], mapa: agruparMetrica(listaTendencia, 'nuevas') },
+                        { nombre: 'Cubiertas', color: PALETA_GRAFICAS[1], mapa: agruparMetrica(listaTendencia, 'cubiertas') },
+                        { nombre: 'Canceladas', color: PALETA_GRAFICAS[3], mapa: agruparMetrica(listaTendencia, 'canceladas') }
+                    ];
+                const clavesPeriodos = ultimosPeriodosClaves(lineas.map(l => l.mapa), periodo === 'semana' ? 12 : 8);
                 const ctxTendencia = document.getElementById('chartTendencia');
+                // La tendencia siempre muestra la línea de tiempo completa; el periodo elegido se resalta con un punto grande.
+                const radiosTendencia = clavesPeriodos.map(k => k === state.dashboardPeriodoSel ? 8 : 3);
                 if (ctxTendencia && clavesPeriodos.length) {
-                    const dlTendencia = (color) => ({
+                    const dlTendencia = (color) => enSeriesTendencia ? { display: false } : ({
                         display: true, color, font: { weight: 'bold', size: 10 }, align: 'top', anchor: 'end',
                         backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4, padding: 3,
                         formatter: v => (v ? v : '')
@@ -1139,153 +1430,44 @@
                         type: 'line',
                         data: {
                             labels: clavesPeriodos.map(k => etiquetaPeriodo(k, periodo)),
-                            datasets: [
-                                { label: 'Nuevas', data: clavesPeriodos.map(k => porPeriodoNuevas[k] || 0), borderColor: PALETA_GRAFICAS[0], backgroundColor: PALETA_GRAFICAS[0] + '33', tension: 0.3, fill: true, datalabels: dlTendencia(PALETA_GRAFICAS[0]) },
-                                { label: 'Cubiertas', data: clavesPeriodos.map(k => porPeriodoCubiertas[k] || 0), borderColor: PALETA_GRAFICAS[1], backgroundColor: PALETA_GRAFICAS[1] + '33', tension: 0.3, fill: true, datalabels: dlTendencia(PALETA_GRAFICAS[1]) },
-                                { label: 'Canceladas', data: clavesPeriodos.map(k => porPeriodoCanceladas[k] || 0), borderColor: PALETA_GRAFICAS[3], backgroundColor: PALETA_GRAFICAS[3] + '33', tension: 0.3, fill: true, datalabels: dlTendencia(PALETA_GRAFICAS[3]) }
-                            ]
+                            datasets: lineas.map(l => ({
+                                label: l.nombre,
+                                data: clavesPeriodos.map(k => l.mapa[k] || 0),
+                                borderColor: l.color,
+                                backgroundColor: l.color + '33',
+                                tension: 0.3,
+                                fill: !enSeriesTendencia,
+                                pointRadius: radiosTendencia,
+                                datalabels: dlTendencia(l.color)
+                            }))
                         },
-                        options: opcionesBaseChart()
+                        options: enSeriesTendencia
+                            ? { ...opcionesBaseChart(), interaction: { mode: 'index', intersect: false } }
+                            : opcionesBaseChart()
                         // Nota: la tendencia es por periodo de tiempo, no por categoría, así
                         // que no tiene filtro por clic (no hay un solo "valor" que filtrar).
                     });
                 }
 
-                // --- Distribución por estatus ---
-                const porEstatus = topPorCampo(vacantes, 'estatusVacante', 12);
-                const ctxEstatus = document.getElementById('chartEstatus');
-                if (ctxEstatus && porEstatus.length) {
-                    dashboardCharts.estatus = new Chart(ctxEstatus, {
-                        type: 'doughnut',
-                        data: {
-                            labels: porEstatus.map(x => x[0]),
-                            datasets: [{ data: porEstatus.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
-                        },
-                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('estatusVacante'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Distribución por prioridad ---
-                const porPrioridad = topPorCampo(vacantes, 'prioridadEfectiva', 5);
-                const ctxPrioridad = document.getElementById('chartPrioridad');
-                if (ctxPrioridad && porPrioridad.length) {
-                    dashboardCharts.prioridad = new Chart(ctxPrioridad, {
-                        type: 'doughnut',
-                        data: {
-                            labels: porPrioridad.map(x => x[0]),
-                            datasets: [{ data: porPrioridad.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
-                        },
-                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('prioridadEfectiva'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Vacantes Viáticadas ---
-                const porViatica = topPorCampo(vacantes, 'viatica', 5);
-                const ctxViatica = document.getElementById('chartViatica');
-                if (ctxViatica && porViatica.length) {
-                    dashboardCharts.viatica = new Chart(ctxViatica, {
-                        type: 'doughnut',
-                        data: {
-                            labels: porViatica.map(x => x[0] || 'Sin especificar'),
-                            datasets: [{ data: porViatica.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
-                        },
-                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('viatica'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Vacantes Referidas ---
-                const porReferida = topPorCampo(vacantes, 'vacanteReferida', 5);
-                const ctxReferida = document.getElementById('chartReferida');
-                if (ctxReferida && porReferida.length) {
-                    dashboardCharts.referida = new Chart(ctxReferida, {
-                        type: 'doughnut',
-                        data: {
-                            labels: porReferida.map(x => x[0] || 'Sin especificar'),
-                            datasets: [{ data: porReferida.map(x => x[1]), backgroundColor: PALETA_GRAFICAS, datalabels: DATALABELS_CONTEO }]
-                        },
-                        options: { ...opcionesBaseChart({ scales: {} }), onClick: alHacerClicEnGrafica('vacanteReferida'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Fuente de Ingreso ---
-                const porFuenteIngreso = topPorCampo(vacantes, 'fuenteIngreso', 8);
-                const ctxFuenteIngreso = document.getElementById('chartFuenteIngreso');
-                if (ctxFuenteIngreso && porFuenteIngreso.length) {
-                    dashboardCharts.fuenteIngreso = new Chart(ctxFuenteIngreso, {
-                        type: 'bar',
-                        data: { labels: porFuenteIngreso.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porFuenteIngreso.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[6 % PALETA_GRAFICAS.length], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('fuenteIngreso'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Por ciudad ---
-                const porCiudad = topPorCampo(vacantes, 'ciudad', 8);
-                const ctxCiudad = document.getElementById('chartCiudad');
-                if (ctxCiudad && porCiudad.length) {
-                    dashboardCharts.ciudad = new Chart(ctxCiudad, {
-                        type: 'bar',
-                        data: { labels: porCiudad.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porCiudad.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[0], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('ciudad'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Por cliente ---
-                const porCliente = topPorCampo(vacantes, 'cliente', 8);
-                const ctxCliente = document.getElementById('chartCliente');
-                if (ctxCliente && porCliente.length) {
-                    dashboardCharts.cliente = new Chart(ctxCliente, {
-                        type: 'bar',
-                        data: { labels: porCliente.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porCliente.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[1], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('cliente'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Por tienda/sucursal ---
-                const porTienda = topPorCampo(vacantes, 'sucursal', 8);
-                const ctxTienda = document.getElementById('chartTienda');
-                if (ctxTienda && porTienda.length) {
-                    dashboardCharts.tienda = new Chart(ctxTienda, {
-                        type: 'bar',
-                        data: { labels: porTienda.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porTienda.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[4], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('sucursal'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Por formato ---
-                const porFormato = topPorCampo(vacantes, 'formato', 8);
-                const ctxFormato = document.getElementById('chartFormato');
-                if (ctxFormato && porFormato.length) {
-                    dashboardCharts.formato = new Chart(ctxFormato, {
-                        type: 'bar',
-                        data: { labels: porFormato.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porFormato.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[5], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('formato'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Por gerente/director ---
-                const porGerente = topPorCampo(vacantes, 'gerenteDirector', 8);
-                const ctxGerente = document.getElementById('chartGerente');
-                if (ctxGerente && porGerente.length) {
-                    dashboardCharts.gerente = new Chart(ctxGerente, {
-                        type: 'bar',
-                        data: { labels: porGerente.map(x => x[0]), datasets: [{ label: 'Vacantes', data: porGerente.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[2], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('gerenteDirector'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
-
-                // --- Motivo de Reapertura (solo vacantes en estatus de reapertura) ---
-                // Incluye categorías como "No se presentó" tal como vengan del catálogo
-                // "MOTIVO REAPERTURA" de la hoja CATALOGOS.
-                const vacantesReabiertas = vacantes.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante));
-                const porMotivoReapertura = topPorCampo(vacantesReabiertas, 'motivoReapertura', 10);
-                const ctxMotivoReapertura = document.getElementById('chartMotivoReapertura');
-                if (ctxMotivoReapertura && porMotivoReapertura.length) {
-                    dashboardCharts.motivoReapertura = new Chart(ctxMotivoReapertura, {
-                        type: 'bar',
-                        data: { labels: porMotivoReapertura.map(x => x[0]), datasets: [{ label: 'Reaperturas', data: porMotivoReapertura.map(x => x[1]), backgroundColor: PALETA_GRAFICAS[6], datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart(), indexAxis: 'y', plugins: { legend: { display: false } }, onClick: alHacerClicEnGrafica('motivoReapertura'), onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
-                    });
-                }
+                // --- Gráficas por categoría (clic = seleccionar/quitar valores; 2+ valores = series por separado) ---
+                const P = PALETA_GRAFICAS;
+                const graficas = [
+                    { clave: 'estatus', canvasId: 'chartEstatus', campo: 'estatusVacante', n: 12, tipo: 'dona' },
+                    { clave: 'prioridad', canvasId: 'chartPrioridad', campo: 'prioridadEfectiva', n: 5, tipo: 'dona' },
+                    { clave: 'viatica', canvasId: 'chartViatica', campo: 'viatica', n: 5, tipo: 'dona' },
+                    { clave: 'referida', canvasId: 'chartReferida', campo: 'vacanteReferida', n: 5, tipo: 'dona' },
+                    { clave: 'fuenteIngreso', canvasId: 'chartFuenteIngreso', campo: 'fuenteIngreso', n: 8, tipo: 'barra', color: P[6] },
+                    { clave: 'ciudad', canvasId: 'chartCiudad', campo: 'ciudad', n: 8, tipo: 'barra', color: P[0] },
+                    { clave: 'cliente', canvasId: 'chartCliente', campo: 'cliente', n: 8, tipo: 'barra', color: P[1] },
+                    { clave: 'tienda', canvasId: 'chartTienda', campo: 'sucursal', n: 8, tipo: 'barra', color: P[4] },
+                    { clave: 'formato', canvasId: 'chartFormato', campo: 'formato', n: 8, tipo: 'barra', color: P[5] },
+                    { clave: 'gerente', canvasId: 'chartGerente', campo: 'gerenteDirector', n: 8, tipo: 'barra', color: P[2] },
+                    // Motivo de Reapertura: solo vacantes en estatus de reapertura (categorías tal como vengan
+                    // del catálogo "MOTIVO REAPERTURA" de la hoja CATALOGOS, ej. "No se presentó").
+                    { clave: 'motivoReapertura', canvasId: 'chartMotivoReapertura', campo: 'motivoReapertura', n: 10, tipo: 'barra', color: P[6], etiqueta: 'Reaperturas',
+                      filtrarLista: lista => lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)) }
+                ];
+                graficas.forEach(cfg => dibujarGraficaCategorica(cfg, basePeriodo));
             }
 
             // Normaliza un registro proveniente del Google Sheet (columnas en PascalCase)
@@ -1936,7 +2118,7 @@
                     </div>
                     ` : ''}
 
-                    ${state.view === 'dashboard' ? renderDashboardHTML(aplicarFiltroDashboard(baseFv)) : `
+                    ${state.view === 'dashboard' ? renderDashboardHTML(aplicarFiltroPeriodoDashboard(aplicarFiltroDashboard(baseFv))) : `
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
                         <button type="button" onclick="filtrarPorTarjeta('total')" class="${claseTarjeta('total')}">
                             <p class="text-gray-400 text-sm">Total de Vacantes</p>
@@ -1965,7 +2147,7 @@
                             <div class="sm:col-span-2">
                                 <div class="relative">
                                     <div class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">${icons.search}</div>
-                                    <input type="text" id="searchInput" placeholder="Buscar por tienda o formato..." value="${state.searchTerm}" class="w-full pl-10 pr-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
+                                    <input type="text" id="searchInput" placeholder="Buscar por tienda, formato o ciudad/municipio..." value="${state.searchTerm}" class="w-full pl-10 pr-4 py-2 bg-[#0a0a0a] border border-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
                                 </div>
                             </div>
                             <div>
@@ -2316,7 +2498,7 @@
 
                 // Dibuja las gráficas del dashboard (solo si esa vista está activa).
                 if (state.view === 'dashboard') {
-                    dibujarGraficasDashboard(aplicarFiltroDashboard(baseFv));
+                    dibujarGraficasDashboard(aplicarFiltroPeriodoDashboard(baseFv), baseFv);
                 }
 
                 // Restauramos el scroll de la tabla y de la ventana que
