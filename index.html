@@ -3,11 +3,20 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+        <meta http-equiv="Pragma" content="no-cache">
+        <meta http-equiv="Expires" content="0">
+        <script>
+            /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. 2026-09-28.2). <<< */
+            const APP_VERSION = '2026-09-30.2';
+        </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
         <style>
             /* --- Tema claro: sobreescribe los colores oscuros cuando body tiene .light-theme --- */
             body.light-theme { background-color: #f3f4f6 !important; }
@@ -123,7 +132,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwLGwXmDgfyIuavh0V_S-WUt4WzveVblRAREXLGDAWI7a22dWFYldCtXfBTc5HV2s3o/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzP2zhw2GUe0OyFy6z0FsrmTIlbvY86aamcQRrftHJYoWzJ5pUCCFHJbid4igmvJgKv/exec';
 
             function enviarWhatsAppVacante(v) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -151,15 +160,21 @@
             // Arma el texto del mensaje de reapertura (sin abrir ninguna ventana),
             // para poder reutilizarlo tanto al abrir la pestaña de WhatsApp de
             // inmediato como al redirigirla después de confirmar en el backend.
-            function armarMensajeReapertura(v, motivo, detalle) {
+            // v = vacante ORIGEN (la que se reabre); nueva = vacante NUEVA con el
+            // folio generado por el backend.
+            function armarMensajeReapertura(v, motivo, detalle, nueva) {
+                nueva = nueva || {};
                 return `🔄 *Vacante Reaperturada*\n\n` +
-                    `Folio: ${v.id}\n` +
+                    `Folio nuevo: ${nueva.id || ''}\n` +
+                    `Folio origen: ${v.id} (${v.estatusVacante})\n` +
                     `Vacante: ${v.vacante || ''}\n` +
                     `Gerente/Director: ${v.gerenteDirector}\n` +
                     `Cliente: ${v.cliente}\n` +
                     `Ciudad: ${v.ciudad}\n` +
                     `Sucursal: ${v.sucursal}\n` +
-                    `Estatus anterior: ${v.estatusVacante}\n` +
+                    `Prioridad: ${nueva.prioridad || v.prioridad || ''}\n` +
+                    `Fecha de solicitud: ${nueva.fechaSolicitud || ''}\n` +
+                    `Fecha límite de contratación: ${nueva.fechaVencimiento || ''}\n` +
                     `Estatus actual: VIGENTE-REAPERTURADO\n` +
                     `Motivo de la reapertura: ${motivo}\n` +
                     (detalle ? `Detalles: ${detalle}\n` : '') +
@@ -173,8 +188,8 @@
             // dentro del mismo clic del usuario (sin await antes). Si necesitas
             // esperar una respuesta del backend primero, usa el patrón de
             // "ventana pre-abierta" que se usa en confirmarReapertura().
-            function enviarWhatsAppReapertura(v, motivo, detalle) {
-                window.open(`https://wa.me/?text=${encodeURIComponent(armarMensajeReapertura(v, motivo, detalle))}`, '_blank');
+            function enviarWhatsAppReapertura(v, motivo, detalle, nueva) {
+                window.open(`https://wa.me/?text=${encodeURIComponent(armarMensajeReapertura(v, motivo, detalle, nueva))}`, '_blank');
             }
 
             // Arma el texto del mensaje de cancelación (sin abrir ninguna
@@ -243,17 +258,77 @@
             // Estatus desde los cuales SÍ se permite reabrir una vacante.
             const ESTATUS_REAPERTURABLES = ['CUBIERTA', 'FORMALIZADO'];
 
-            // Pide al backend (Code.gs) que reabra la vacante: busca el folio en la
-            // hoja REGISTRO VACANTES, valida el estatus actual otra vez del lado del
-            // servidor (por seguridad) y, si aplica, cambia el estatus y guarda el
-            // motivo de reapertura.
-            async function reabrirVacanteEnSheet(id, motivoReapertura, detalleReapertura) {
+            // Reglas de Fecha Límite Contratación por Prioridad (las mismas del
+            // modal "Nueva Vacante"): Alta = +1 semana, Media = +15 días, Baja = +1 mes.
+            const REAPERTURA_DIAS_POR_PRIORIDAD = { alta: { dias: 7 }, media: { dias: 15 }, baja: { meses: 1 } };
+
+            function fechaComoInputDate(d) {
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            }
+
+            function calcularFechaLimiteReapertura(prioridad, desdeInputDate) {
+                const config = REAPERTURA_DIAS_POR_PRIORIDAD[String(prioridad || '').trim().toLowerCase()];
+                if (!config) return '';
+                const limite = new Date(desdeInputDate + 'T00:00:00');
+                if (config.dias) limite.setDate(limite.getDate() + config.dias);
+                if (config.meses) limite.setMonth(limite.getMonth() + config.meses);
+                return fechaComoInputDate(limite);
+            }
+
+            // Arma la vacante NUEVA que nace de una reapertura: copia TODOS los
+            // datos de la vacante original (puesto, tienda, gerente, cliente,
+            // prioridad, viática, referida, observaciones...). Fecha Solicitud es
+            // hoy y Fecha Límite se recalcula según la Prioridad. El folio (id) lo
+            // genera el backend. La vacante original NO se modifica.
+            function construirVacanteReabierta(origen, motivoReapertura, detalleReapertura) {
+                const hoy = fechaComoInputDate(new Date());
+                return {
+                    id: '',
+                    requerimiento: origen.requerimiento || '',
+                    vacante: origen.vacante || '',
+                    gerenteDirector: origen.gerenteDirector || '',
+                    idTienda: origen.idTienda || '',
+                    estado: origen.estado || '',
+                    ciudad: origen.ciudad || '',
+                    cliente: origen.cliente || '',
+                    proyecto: origen.proyecto || '',
+                    motivoVacante: origen.motivoVacante || '',
+                    formato: origen.formato || '',
+                    sucursal: origen.sucursal || '',
+                    direccionTienda: origen.direccionTienda || '',
+                    prioridad: origen.prioridad || 'MEDIA',
+                    viatica: origen.viatica || '',
+                    vacanteReferida: origen.vacanteReferida || '',
+                    referidoNombre: origen.referidoNombre || '',
+                    referidoTelefono: origen.referidoTelefono || '',
+                    fechaSolicitud: hoy,
+                    fechaVencimiento: calcularFechaLimiteReapertura(origen.prioridad, hoy),
+                    estatusVacante: 'VIGENTE-REAPERTURADO',
+                    fechaCubierta: '',
+                    motivoReapertura,
+                    detalleReapertura: detalleReapertura || '',
+                    folioOrigen: origen.id,
+                    usuarioCarga: state.currentUser ? state.currentUser.usuario : '',
+                    nombreCarga: state.currentUser ? state.currentUser.nombre : ''
+                };
+            }
+
+            // Pide al backend (Code.gs) que reabra la vacante CREANDO UN FOLIO NUEVO:
+            // valida otra vez del lado del servidor que el folio origen siga en un
+            // estatus reabrible, genera el folio nuevo y guarda la fila con todos los
+            // datos copiados. Responde { ok: true, nuevoFolio: 'RAV0001' }.
+            async function reabrirVacanteEnSheet(origen, vacanteNueva, motivoReapertura, detalleReapertura) {
                 const res = await fetch(NOTIF_APPS_SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({
-                        accion: 'reabrir_vacante',
-                        id,
+                        accion: 'reabrir_con_nuevo_folio',
+                        id: origen.id,
+                        folioOrigen: origen.id,
+                        vacanteNueva,
                         motivoReapertura,
                         detalleReapertura: detalleReapertura || '',
                         usuario: state.currentUser ? state.currentUser.usuario : '',
@@ -481,8 +556,28 @@
                 });
             }
 
-            // Estatus que se consideran "Reapertura" para el conteo/filtro de la tarjeta.
+            // Estatus que se consideran "Reapertura" para el conteo/filtro de la tarjeta
+            // (solo cuenta vacantes que SIGUEN en un estatus de reapertura hoy).
             const ESTATUS_DE_REAPERTURA = ['VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
+
+            // ¿La vacante fue reabierta alguna vez, sin importar su estatus actual?
+            // El estatus actual no alcanza para esto: una vacante reabierta y luego
+            // cubierta pasa a estatus CUBIERTA y ya no aparece en ESTATUS_DE_REAPERTURA.
+            // Por eso también nos apoyamos en que tenga un Motivo de Reapertura
+            // capturado (columna "MOTIVO REAPERTURA" de la hoja), que se guarda al
+            // reabrir y no se borra al volver a cubrirla.
+            function fueReabiertaAlgunaVez(v) {
+                return !!(v.estatusReapertura && v.estatusReapertura.trim())
+                    || !!(v.motivoReapertura && v.motivoReapertura.trim())
+                    || ESTATUS_DE_REAPERTURA.includes(v.estatusVacante);
+            }
+
+            // Estatus de la reapertura en sí (columna EstatusReapertura si ya se llenó;
+            // si no, se infiere del estatus principal, para folios anteriores a la columna).
+            function estatusDeLaReapertura(v) {
+                if (v.estatusReapertura && v.estatusReapertura.trim()) return v.estatusReapertura.trim().toUpperCase();
+                return v.estatusVacante;
+            }
 
             // Aplica, sobre una lista ya filtrada por búsqueda/selects, el filtro
             // adicional de la tarjeta de estadística seleccionada (state.filterCard).
@@ -708,6 +803,10 @@
                         }
                     }
                     v.prioridadEfectiva = nueva;
+                    // Desenlace de la reapertura (para la gráfica y el cruce de KPIs):
+                    // vacío si nunca se reabrió; si sí, el estatus de EstatusReapertura
+                    // o, para folios anteriores a esa columna, el estatus principal.
+                    v.estatusReaperturaEfectivo = fueReabiertaAlgunaVez(v) ? estatusDeLaReapertura(v) : '';
                 });
                 const nuevas = state.vacancies
                     .filter(requiereAlertaNoCubrir)
@@ -839,7 +938,147 @@
             // Normaliza el valor de un campo (ciudad, cliente, estatus, etc.) de una
             // vacante, para que el conteo de gráficas y el filtro por clic usen
             // exactamente el mismo criterio (incluyendo el caso "Sin dato").
+
+            // Coordenadas aproximadas (lat, lon) del centro de cada estado de México
+            // (las 32 entidades federativas), para el mapa "Vacantes por Estado" del
+            // dashboard. Las claves van en MAYÚSCULAS y sin acentos (normalizarNombreCiudad
+            // se encarga de convertir cualquier texto a esa misma forma antes de buscarlo
+            // aquí).
+            const COORDENADAS_ESTADOS = {
+                'CIUDAD DE MEXICO': [19.4326, -99.1332], 'MEXICO': [19.2926, -99.6557],
+                'JALISCO': [20.6597, -103.3496], 'NUEVO LEON': [25.5922, -99.9962],
+                'PUEBLA': [19.0414, -98.2063], 'BAJA CALIFORNIA': [30.8406, -115.2838],
+                'GUANAJUATO': [21.0190, -101.2574], 'CHIHUAHUA': [28.6353, -106.0889],
+                'QUERETARO': [20.5888, -100.3899], 'YUCATAN': [20.7099, -89.0943],
+                'QUINTANA ROO': [19.1817, -88.4791], 'SAN LUIS POTOSI': [22.1565, -100.9855],
+                'AGUASCALIENTES': [21.8853, -102.2916], 'SONORA': [29.2972, -110.3309],
+                'COAHUILA': [27.0587, -101.7068], 'SINALOA': [24.8091, -107.3940],
+                'MICHOACAN': [19.5665, -101.7068], 'VERACRUZ': [19.1738, -96.1342],
+                'TABASCO': [17.9869, -92.9303], 'TAMAULIPAS': [24.2669, -98.8363],
+                'GUERRERO': [17.4392, -99.5451], 'OAXACA': [17.0732, -96.7266],
+                'CHIAPAS': [16.7569, -93.1292], 'DURANGO': [24.0277, -104.6532],
+                'HIDALGO': [20.0911, -98.7624], 'MORELOS': [18.6813, -99.1013],
+                'COLIMA': [19.2452, -103.7241], 'CAMPECHE': [19.8301, -90.5349],
+                'BAJA CALIFORNIA SUR': [26.0444, -111.6661], 'ZACATECAS': [22.7709, -102.5832],
+                'NAYARIT': [21.5041, -104.8942], 'TLAXCALA': [19.3182, -98.2375]
+            };
+
+            // Nombres "bonitos" (con acentos, capitalización normal) de cada estado, solo
+            // para mostrarlos en el mapa. La clave es la misma que en COORDENADAS_ESTADOS.
+            const NOMBRES_ESTADOS = {
+                'CIUDAD DE MEXICO': 'Ciudad de México', 'MEXICO': 'Estado de México',
+                'JALISCO': 'Jalisco', 'NUEVO LEON': 'Nuevo León', 'PUEBLA': 'Puebla',
+                'BAJA CALIFORNIA': 'Baja California', 'GUANAJUATO': 'Guanajuato',
+                'CHIHUAHUA': 'Chihuahua', 'QUERETARO': 'Querétaro', 'YUCATAN': 'Yucatán',
+                'QUINTANA ROO': 'Quintana Roo', 'SAN LUIS POTOSI': 'San Luis Potosí',
+                'AGUASCALIENTES': 'Aguascalientes', 'SONORA': 'Sonora', 'COAHUILA': 'Coahuila',
+                'SINALOA': 'Sinaloa', 'MICHOACAN': 'Michoacán', 'VERACRUZ': 'Veracruz',
+                'TABASCO': 'Tabasco', 'TAMAULIPAS': 'Tamaulipas', 'GUERRERO': 'Guerrero',
+                'OAXACA': 'Oaxaca', 'CHIAPAS': 'Chiapas', 'DURANGO': 'Durango',
+                'HIDALGO': 'Hidalgo', 'MORELOS': 'Morelos', 'COLIMA': 'Colima',
+                'CAMPECHE': 'Campeche', 'BAJA CALIFORNIA SUR': 'Baja California Sur',
+                'ZACATECAS': 'Zacatecas', 'NAYARIT': 'Nayarit', 'TLAXCALA': 'Tlaxcala'
+            };
+
+            // A qué estado pertenece cada ciudad conocida (clave = ciudad normalizada,
+            // valor = clave de estado normalizada, tal como aparece en COORDENADAS_ESTADOS).
+            // Si una ciudad de tu operación no aparece aquí, agrégala con el mismo formato:
+            // 'NOMBRE DE CIUDAD SIN ACENTOS': 'NOMBRE DE ESTADO SIN ACENTOS'.
+            const CIUDAD_A_ESTADO = {
+                'CIUDAD DE MEXICO': 'CIUDAD DE MEXICO', 'CDMX': 'CIUDAD DE MEXICO', 'MEXICO': 'CIUDAD DE MEXICO',
+                'GUADALAJARA': 'JALISCO', 'GDL': 'JALISCO', 'ZAPOPAN': 'JALISCO',
+                'MONTERREY': 'NUEVO LEON', 'MTY': 'NUEVO LEON', 'SAN NICOLAS DE LOS GARZA': 'NUEVO LEON',
+                'SAN PEDRO GARZA GARCIA': 'NUEVO LEON', 'GUADALUPE': 'NUEVO LEON', 'APODACA': 'NUEVO LEON',
+                'PUEBLA': 'PUEBLA', 'TIJUANA': 'BAJA CALIFORNIA', 'LEON': 'GUANAJUATO',
+                'CIUDAD JUAREZ': 'CHIHUAHUA', 'JUAREZ': 'CHIHUAHUA', 'QUERETARO': 'QUERETARO',
+                'MERIDA': 'YUCATAN', 'CANCUN': 'QUINTANA ROO', 'TOLUCA': 'MEXICO',
+                'CHIHUAHUA': 'CHIHUAHUA', 'SAN LUIS POTOSI': 'SAN LUIS POTOSI', 'AGUASCALIENTES': 'AGUASCALIENTES',
+                'HERMOSILLO': 'SONORA', 'SALTILLO': 'COAHUILA', 'CULIACAN': 'SINALOA',
+                'MEXICALI': 'BAJA CALIFORNIA', 'MORELIA': 'MICHOACAN', 'VERACRUZ': 'VERACRUZ',
+                'VILLAHERMOSA': 'TABASCO', 'TAMPICO': 'TAMAULIPAS', 'TORREON': 'COAHUILA',
+                'ACAPULCO': 'GUERRERO', 'OAXACA': 'OAXACA', 'TUXTLA GUTIERREZ': 'CHIAPAS',
+                'DURANGO': 'DURANGO', 'PACHUCA': 'HIDALGO', 'CUERNAVACA': 'MORELOS',
+                'COLIMA': 'COLIMA', 'CAMPECHE': 'CAMPECHE', 'CHETUMAL': 'QUINTANA ROO',
+                'LA PAZ': 'BAJA CALIFORNIA SUR', 'ZACATECAS': 'ZACATECAS', 'TEPIC': 'NAYARIT',
+                'XALAPA': 'VERACRUZ', 'REYNOSA': 'TAMAULIPAS', 'MATAMOROS': 'TAMAULIPAS',
+                'NUEVO LAREDO': 'TAMAULIPAS', 'LOS MOCHIS': 'SINALOA', 'MAZATLAN': 'SINALOA',
+                'IRAPUATO': 'GUANAJUATO', 'CELAYA': 'GUANAJUATO', 'ENSENADA': 'BAJA CALIFORNIA',
+                'COATZACOALCOS': 'VERACRUZ', 'CIUDAD OBREGON': 'SONORA', 'URUAPAN': 'MICHOACAN',
+                'MANZANILLO': 'COLIMA', 'TLAXCALA': 'TLAXCALA', 'MONCLOVA': 'COAHUILA',
+                'PIEDRAS NEGRAS': 'COAHUILA', 'COAHUILA': 'COAHUILA', 'SONORA': 'SONORA',
+                'SINALOA': 'SINALOA', 'CHIAPAS': 'CHIAPAS', 'GUANAJUATO': 'GUANAJUATO',
+                'MICHOACAN': 'MICHOACAN', 'JALISCO': 'JALISCO', 'NUEVO LEON': 'NUEVO LEON',
+                'TAMAULIPAS': 'TAMAULIPAS', 'VERACRUZ DE IGNACIO DE LA LLAVE': 'VERACRUZ',
+                'BAJA CALIFORNIA': 'BAJA CALIFORNIA', 'BAJA CALIFORNIA SUR': 'BAJA CALIFORNIA SUR',
+                'YUCATAN': 'YUCATAN', 'QUINTANA ROO': 'QUINTANA ROO', 'GUERRERO': 'GUERRERO',
+                'OAXACA DE JUAREZ': 'OAXACA', 'HIDALGO': 'HIDALGO', 'PUEBLA DE ZARAGOZA': 'PUEBLA',
+                'MORELOS': 'MORELOS', 'TABASCO': 'TABASCO', 'CAMPECHE ESTADO': 'CAMPECHE',
+                'ESTADO DE MEXICO': 'MEXICO', 'EDOMEX': 'MEXICO', 'NAYARIT': 'NAYARIT',
+                'ZACATECAS ESTADO': 'ZACATECAS', 'AGUASCALIENTES ESTADO': 'AGUASCALIENTES',
+                'DURANGO ESTADO': 'DURANGO', 'COLIMA ESTADO': 'COLIMA', 'TLAXCALA ESTADO': 'TLAXCALA',
+                // Alcaldías de la Ciudad de México:
+                'COYOACAN': 'CIUDAD DE MEXICO', 'CUAUHTEMOC': 'CIUDAD DE MEXICO', 'GUSTAVO A MADERO': 'CIUDAD DE MEXICO',
+                'BENITO JUAREZ': 'CIUDAD DE MEXICO', 'TLALPAN': 'CIUDAD DE MEXICO', 'IZTAPALAPA': 'CIUDAD DE MEXICO',
+                'ALVARO OBREGON': 'CIUDAD DE MEXICO', 'MIGUEL HIDALGO': 'CIUDAD DE MEXICO', 'AZCAPOTZALCO': 'CIUDAD DE MEXICO',
+                'CUAJIMALPA DE MORELOS': 'CIUDAD DE MEXICO', 'VENUSTIANO CARRANZA': 'CIUDAD DE MEXICO',
+                'IZTACALCO': 'CIUDAD DE MEXICO', 'XOCHIMILCO': 'CIUDAD DE MEXICO', 'TLAHUAC': 'CIUDAD DE MEXICO',
+                'MILPA ALTA': 'CIUDAD DE MEXICO', 'MAGDALENA CONTRERAS': 'CIUDAD DE MEXICO',
+                // Municipios del Estado de México (zona metropolitana y otros):
+                'NAUCALPAN DE JUAREZ': 'MEXICO', 'ECATEPEC DE MORELOS': 'MEXICO', 'HUIXQUILUCAN': 'MEXICO',
+                'TLALNEPANTLA DE BAZ': 'MEXICO', 'METEPEC': 'MEXICO', 'ATIZAPAN DE ZARAGOZA': 'MEXICO',
+                'CUAUTITLAN IZCALLI': 'MEXICO', 'MELCHOR OCAMPO': 'MEXICO', 'TEXCOCO': 'MEXICO', 'ZUMPANGO': 'MEXICO',
+                'NEZAHUALCOYOTL': 'MEXICO', 'CHIMALHUACAN': 'MEXICO', 'COACALCO DE BERRIOZABAL': 'MEXICO',
+                'TULTITLAN': 'MEXICO', 'IXTAPALUCA': 'MEXICO', 'LOS REYES LA PAZ': 'MEXICO', 'CUAUTITLAN': 'MEXICO',
+                // Otras ciudades / municipios:
+                'SOLIDARIDAD': 'QUINTANA ROO', 'NOGALES': 'SONORA', 'PLAYAS DE ROSARITO': 'BAJA CALIFORNIA',
+                'AHOME': 'SINALOA', 'CAJEME': 'SONORA', 'CHILPANCINGO DE LOS BRAVO': 'GUERRERO',
+                'SAN PEDRO TLAQUEPAQUE': 'JALISCO', 'TLAJOMULCO DE ZUNIGA': 'JALISCO', 'TONALA': 'JALISCO',
+                'BOCA DEL RIO': 'VERACRUZ', 'LERDO': 'DURANGO', 'GOMEZ PALACIO': 'DURANGO',
+                'ZAMORA': 'MICHOACAN', 'LAZARO CARDENAS': 'MICHOACAN', 'LOS CABOS': 'BAJA CALIFORNIA SUR',
+                'NAVOLATO': 'SINALOA', 'COMONDU': 'BAJA CALIFORNIA SUR', 'HUATABAMPO': 'SONORA',
+                'IGUALA DE LA INDEPENDENCIA': 'GUERRERO', 'ACAPULCO DE JUAREZ': 'GUERRERO',
+                'PUERTO VALLARTA': 'JALISCO', 'VICTORIA': 'TAMAULIPAS', 'CIUDAD VICTORIA': 'TAMAULIPAS',
+                'ACUNA': 'COAHUILA', 'CIUDAD ACUNA': 'COAHUILA', 'SAN PEDRO': 'COAHUILA',
+                'AGUA PRIETA': 'SONORA', 'COMALCALCO': 'TABASCO', 'CARMEN': 'CAMPECHE', 'CIUDAD DEL CARMEN': 'CAMPECHE',
+                'CANANEA': 'SONORA', 'VALLADOLID': 'YUCATAN'
+            };
+
+            // Quita acentos y pasa a MAYÚSCULAS para poder cruzar el valor de la
+            // columna Ciudad (que puede venir con o sin acentos) contra
+            // CIUDAD_A_ESTADO / COORDENADAS_ESTADOS.
+            function normalizarNombreCiudad(texto) {
+                return String(texto || '')
+                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                    .toUpperCase()
+                    .replace(/[.,]/g, '')   // quita puntos/comas ("Gustavo A. Madero" → "GUSTAVO A MADERO")
+                    .replace(/\s+/g, ' ')   // colapsa espacios repetidos
+                    .trim();
+            }
+
+            // Devuelve la clave de estado (tal como está en COORDENADAS_ESTADOS) a la que
+            // pertenece una ciudad, usando CIUDAD_A_ESTADO. Si el valor de Ciudad ya es
+            // directamente el nombre de un estado (algunas sucursales capturan así), lo
+            // usa tal cual. Devuelve null si no se pudo determinar.
+            function estadoDeCiudad(ciudad) {
+                const clave = normalizarNombreCiudad(ciudad);
+                if (CIUDAD_A_ESTADO[clave]) return CIUDAD_A_ESTADO[clave];
+                if (COORDENADAS_ESTADOS[clave]) return clave;
+                return null;
+            }
+
+            // Mapa inverso: nombre "bonito" del estado (normalizado) -> su clave en
+            // COORDENADAS_ESTADOS. Necesario porque el nombre bonito no siempre coincide
+            // con la clave (ej. "Estado de México" normaliza a "ESTADO DE MEXICO", pero
+            // la clave es "MEXICO").
+            const CLAVE_POR_NOMBRE_ESTADO = Object.fromEntries(
+                Object.entries(NOMBRES_ESTADOS).map(([clave, nombre]) => [normalizarNombreCiudad(nombre), clave])
+            );
+
             function valorNormalizado(v, campo) {
+                if (campo === 'estadoGeografico') {
+                    const clave = estadoDeCiudad(v.ciudad);
+                    return clave ? (NOMBRES_ESTADOS[clave] || clave) : 'Sin dato';
+                }
                 const val = (v[campo] || '').toString().trim();
                 return val || 'Sin dato';
             }
@@ -862,11 +1101,13 @@
                 prioridad: 'Prioridad',
                 prioridadEfectiva: 'Prioridad',
                 ciudad: 'Ciudad',
+                estadoGeografico: 'Estado',
                 cliente: 'Cliente',
                 gerenteDirector: 'Gerente/Director',
                 sucursal: 'Tienda',
                 proyecto: 'Proyecto',
                 motivoReapertura: 'Motivo de Reapertura',
+                estatusReaperturaEfectivo: 'Desenlace de Reapertura',
                 viatica: 'Genera Viáticos para cubrir la vacante',
                 vacanteReferida: 'La vacante esta ya referida en Joins',
                 fuenteIngreso: 'Fuente de Ingreso'
@@ -1061,6 +1302,12 @@
                 const nVigentes = vacantes.filter(v => ESTATUS_CUENTAN_PARA_VENCIMIENTO.includes(v.estatusVacante)).length;
                 const nCanceladas = vacantes.filter(v => v.estatusVacante === 'CANCELADA').length;
                 const nReaperturas = vacantes.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)).length;
+                // Cruce Reaperturas × Cubiertas: de todas las que se reabrieron alguna
+                // vez (sigan o no hoy en estatus de reapertura), cuántas ya se cubrieron.
+                const vacantesReabiertasHistorico = vacantes.filter(fueReabiertaAlgunaVez);
+                const nReaperturasHistorico = vacantesReabiertasHistorico.length;
+                const nReaperturasCubiertas = vacantesReabiertasHistorico.filter(v => estatusDeLaReapertura(v) === 'CUBIERTA').length;
+                const pctReaperturasCubiertas = nReaperturasHistorico ? Math.round((nReaperturasCubiertas / nReaperturasHistorico) * 100) : 0;
                 const diasCobertura = promedioDiasCobertura(vacantes);
                 const isLight = state.theme === 'light';
                 const tarjeta = isLight ? 'bg-white border-gray-200' : 'bg-[#1a1a1a] border-gray-800';
@@ -1172,6 +1419,7 @@
                         ${kpi('% Vigentes', `${pct(nVigentes)}%`, `${nVigentes} vacantes`)}
                         ${kpi('% Canceladas', `${pct(nCanceladas)}%`, `${nCanceladas} vacantes`)}
                         ${kpi('% Reaperturas', `${pct(nReaperturas)}%`, `${nReaperturas} vacantes`)}
+                        ${kpi('Reaperturas Cubiertas', `${nReaperturasCubiertas} de ${nReaperturasHistorico}`, nReaperturasHistorico ? `${pctReaperturasCubiertas}% de las reabiertas` : 'sin reaperturas aún')}
                         ${kpi('Días Prom. de Cobertura', diasCobertura !== null ? diasCobertura : '—', diasCobertura !== null ? 'solo vacantes cubiertas' : 'sin datos aún')}
                     </div>
 
@@ -1181,73 +1429,94 @@
                                 <p class="text-white font-semibold">${tituloTendencia}</p>
                                 ${selectorMetrica}
                             </div>
-                            <div style="height:300px"><canvas id="chartTendencia"></canvas></div>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartTendencia"></canvas></div></div>
                         </div>
                     </div>
 
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Distribución por Estatus</p>
-                            <div style="height:280px"><canvas id="chartEstatus"></canvas></div>
+                            <div style="height:280px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartEstatus"></canvas></div></div>
                         </div>
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Distribución por Prioridad</p>
-                            <div style="height:280px"><canvas id="chartPrioridad"></canvas></div>
+                            <div style="height:280px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartPrioridad"></canvas></div></div>
                         </div>
                     </div>
 
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
-                            <p class="text-white font-semibold mb-3">Vacantes por Ciudad (top 8)</p>
-                            <div style="height:300px"><canvas id="chartCiudad"></canvas></div>
+                            <p class="text-white font-semibold mb-3">Vacantes por Estado (top 8)</p>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartCiudad"></canvas></div></div>
                         </div>
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Vacantes por Cliente (top 8)</p>
-                            <div style="height:300px"><canvas id="chartCliente"></canvas></div>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartCliente"></canvas></div></div>
                         </div>
                     </div>
 
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Vacantes por Tienda/Sucursal (top 8)</p>
-                            <div style="height:300px"><canvas id="chartTienda"></canvas></div>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartTienda"></canvas></div></div>
                         </div>
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Vacantes por Formato (top 8)</p>
-                            <div style="height:300px"><canvas id="chartFormato"></canvas></div>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartFormato"></canvas></div></div>
                         </div>
                     </div>
 
                     <div class="mb-6 grid grid-cols-1 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Vacantes por Gerente Operativo/Director (top 8)</p>
-                            <div style="height:320px"><canvas id="chartGerente"></canvas></div>
+                            <div style="height:320px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartGerente"></canvas></div></div>
                         </div>
                     </div>
 
                     <div class="mb-6 grid grid-cols-1 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
-                            <p class="text-white font-semibold mb-3">Reapertura</p>
-                            <div style="height:300px"><canvas id="chartMotivoReapertura"></canvas></div>
+                            <p class="text-white font-semibold mb-3">Motivo Reapertura</p>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartMotivoReapertura"></canvas></div></div>
                         </div>
                     </div>
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Genera Viáticos para cubrir la vacante</p>
-                            <div style="height:280px"><canvas id="chartViatica"></canvas></div>
+                            <div style="height:280px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartViatica"></canvas></div></div>
                         </div>
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">La vacante esta ya referida en Joins</p>
-                            <div style="height:280px"><canvas id="chartReferida"></canvas></div>
+                            <div style="height:280px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartReferida"></canvas></div></div>
                         </div>
                     </div>
                     <div class="mb-6 grid grid-cols-1 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Fuente de Ingreso</p>
-                            <div style="height:300px"><canvas id="chartFuenteIngreso"></canvas></div>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartFuenteIngreso"></canvas></div></div>
+                        </div>
+                    </div>
+
+                    <div class="mb-6 grid grid-cols-1 gap-4">
+                        <div class="${cont} p-4 rounded-lg shadow-lg border">
+                            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                <p class="text-white font-semibold">Mapa de Vacantes por Estado</p>
+                                <span class="text-xs text-gray-500 no-imprimir">El tamaño del punto es el número de vacantes en ese estado. Haz clic en un punto para filtrar por ese estado.</span>
+                            </div>
+                            <div id="mapaVacantes" style="height:420px;border-radius:0.5rem;overflow:hidden"></div>
+                            <p id="avisoCiudadesSinMapa" class="hidden text-xs text-amber-500 mt-2"></p>
                         </div>
                     </div>
                 `;
+            }
+
+            // Instancia de Leaflet del mapa del dashboard (se recrea en cada render,
+            // igual que las gráficas de Chart.js, porque #app se reemplaza por completo).
+            let mapaVacantesLeaflet = null;
+            function destruirMapaDashboard() {
+                if (mapaVacantesLeaflet) {
+                    try { mapaVacantesLeaflet.remove(); } catch (err) { /* el contenedor ya no existe, no pasa nada */ }
+                    mapaVacantesLeaflet = null;
+                }
             }
 
             // Dibuja las gráficas de Chart.js dentro de los <canvas> ya insertados
@@ -1373,10 +1642,21 @@
                         return `${c.dataset.label}: ${c.raw} (${pct}% de esta serie)`;
                     } } };
                 }
-                // Con varias series, la gráfica horizontal crece para que las barras no se amontonen.
-                if (enSeries && horizontal && canvas.parentElement) {
-                    const base = parseInt(canvas.parentElement.style.height, 10) || 300;
-                    canvas.parentElement.style.height = Math.max(base, labels.length * (dsPrep.length * 16 + 12) + 50) + 'px';
+                // Si hay más de 8 categorías, el contenedor interior crece en el eje de
+                // las barras y el exterior (overflow:auto) muestra su scroll en vez de
+                // amontonar o recortar categorías a las primeras 8.
+                if (canvas.parentElement && labels.length > 8) {
+                    const porBarra = dsPrep.length * 16 + 12;   // más alto/ancho si hay varias series
+                    const medida = Math.max(300, labels.length * porBarra + 50) + 'px';
+                    if (horizontal) {
+                        // Barras horizontales (van hacia abajo): crece el alto → scroll vertical.
+                        canvas.parentElement.style.height = medida;
+                        canvas.parentElement.style.width = '100%';
+                    } else {
+                        // Barras verticales agrupadas (dona en modo series): crece el ancho → scroll horizontal.
+                        canvas.parentElement.style.width = medida;
+                        canvas.parentElement.style.height = '100%';
+                    }
                 }
                 dashboardCharts[cfg.clave] = new Chart(canvas, {
                     type: 'bar',
@@ -1385,10 +1665,79 @@
                 });
             }
 
+
+            // Dibuja el mapa de "Vacantes por Estado": un punto por estado, tamaño según
+            // el número de vacantes, coloreado igual que la gráfica de barras de Estado
+            // (mismo estado de selección/series). Usa el campo derivado 'estadoGeografico'
+            // (calculado en valorNormalizado a partir de la ciudad), así que el clic
+            // selecciona un solo valor por punto —igual que cualquier otra gráfica del
+            // dashboard— y no desajusta la Tendencia ni las demás tarjetas.
+            function dibujarMapaVacantes(basePeriodo) {
+                const contenedor = document.getElementById('mapaVacantes');
+                if (!contenedor) return;
+                if (typeof L === 'undefined') {
+                    contenedor.innerHTML = '<div class="h-full flex items-center justify-center text-amber-500 text-sm p-4 text-center">No se pudo cargar el mapa (Leaflet). Verifica tu conexión a internet o si tu red bloquea cdnjs.cloudflare.com.</div>';
+                    return;
+                }
+
+                const prep = prepararGraficaCategorica({ campo: 'estadoGeografico', n: 10000 }, basePeriodo);
+                const { labels, datasets, propios, hayPropio, esCampoSeries } = prep;
+                const estaSel = l => !hayPropio || propios.includes(l);
+                const colorSerieDe = l => { const j = propios.indexOf(l); return j >= 0 ? PALETA_GRAFICAS[j % PALETA_GRAFICAS.length] : '#64748B'; };
+
+                mapaVacantesLeaflet = L.map(contenedor, { scrollWheelZoom: false });
+                // OpenStreetMap bloquea (403) las peticiones de apps alojadas que no cumplen
+                // su política de uso de tiles (osm.wiki/Blocked), y CartoDB ahora exige API key
+                // para uso anónimo. Se usa en su lugar Esri (World_Street_Map), que no requiere
+                // API key para este tipo de uso.
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+                    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China (Hong Kong), Esri (Thailand), TomTom',
+                    maxZoom: 18
+                }).addTo(mapaVacantesLeaflet);
+
+                const sinUbicar = [];
+                const puntos = [];
+                labels.forEach((nombreEstado, i) => {
+                    const total = datasets.reduce((suma, ds) => suma + (ds.data[i] || 0), 0);
+                    if (!total) return;
+                    const coords = COORDENADAS_ESTADOS[CLAVE_POR_NOMBRE_ESTADO[normalizarNombreCiudad(nombreEstado)]];
+                    if (!coords) { sinUbicar.push(nombreEstado); return; }
+
+                    const radio = 8 + Math.sqrt(total) * 4;
+                    let color = '#3B82F6';
+                    if (esCampoSeries) color = colorSerieDe(nombreEstado);
+                    else if (hayPropio) color = estaSel(nombreEstado) ? '#3B82F6' : '#64748B';
+
+                    const marcador = L.circleMarker(coords, {
+                        radius: radio, color, fillColor: color, fillOpacity: hayPropio && !estaSel(nombreEstado) && !esCampoSeries ? 0.35 : 0.75, weight: 2
+                    }).addTo(mapaVacantesLeaflet);
+                    marcador.bindTooltip(`<strong>${escHtmlDash(nombreEstado)}</strong>: ${total} vacante${total === 1 ? '' : 's'}`);
+                    marcador.on('click', () => filtrarDashboardPor('estadoGeografico', nombreEstado));
+                    puntos.push(coords);
+                });
+
+                if (puntos.length) {
+                    mapaVacantesLeaflet.fitBounds(puntos, { padding: [30, 30], maxZoom: 6 });
+                } else {
+                    mapaVacantesLeaflet.setView([23.6345, -102.5528], 5); // centro de México, sin datos ubicables aún
+                }
+
+                const aviso = document.getElementById('avisoCiudadesSinMapa');
+                if (aviso) {
+                    if (sinUbicar.length && !sinUbicar.every(e => e === 'Sin dato')) {
+                        aviso.textContent = `No se pudo ubicar en el mapa el estado "${sinUbicar.filter(e => e !== 'Sin dato').join(', ')}" (agrégalo a COORDENADAS_ESTADOS en el código).`;
+                        aviso.classList.remove('hidden');
+                    } else {
+                        aviso.classList.add('hidden');
+                    }
+                }
+            }
+
             // basePeriodo: vacantes (búsqueda/selects + periodo elegido) SIN la selección de las gráficas.
             // baseSinPeriodo: lo mismo pero sin acotar por periodo (para que la tendencia muestre toda la línea de tiempo).
             function dibujarGraficasDashboard(basePeriodo, baseSinPeriodo = basePeriodo) {
                 destruirGraficasDashboard();
+                destruirMapaDashboard();
                 const avisoCdn = document.getElementById('avisoChartCdn');
                 if (typeof Chart === 'undefined') {
                     // La librería de gráficas no cargó (sin internet o el CDN está bloqueado).
@@ -1416,10 +1765,16 @@
                         { nombre: 'Cubiertas', color: PALETA_GRAFICAS[1], mapa: agruparMetrica(listaTendencia, 'cubiertas') },
                         { nombre: 'Canceladas', color: PALETA_GRAFICAS[3], mapa: agruparMetrica(listaTendencia, 'canceladas') }
                     ];
-                const clavesPeriodos = ultimosPeriodosClaves(lineas.map(l => l.mapa), periodo === 'semana' ? 12 : 8);
+                const clavesPeriodos = ultimosPeriodosClaves(lineas.map(l => l.mapa), 9999);
                 const ctxTendencia = document.getElementById('chartTendencia');
                 // La tendencia siempre muestra la línea de tiempo completa; el periodo elegido se resalta con un punto grande.
                 const radiosTendencia = clavesPeriodos.map(k => k === state.dashboardPeriodoSel ? 8 : 3);
+                if (ctxTendencia && clavesPeriodos.length > 8 && ctxTendencia.parentElement) {
+                    // Más de 8 periodos: el contenedor interior crece a lo ancho y el
+                    // exterior (overflow:auto) muestra su scroll horizontal.
+                    ctxTendencia.parentElement.style.width = Math.max(100, clavesPeriodos.length * 60) + 'px';
+                    ctxTendencia.parentElement.style.height = '100%';
+                }
                 if (ctxTendencia && clavesPeriodos.length) {
                     const dlTendencia = (color) => enSeriesTendencia ? { display: false } : ({
                         display: true, color, font: { weight: 'bold', size: 10 }, align: 'top', anchor: 'end',
@@ -1452,22 +1807,24 @@
                 // --- Gráficas por categoría (clic = seleccionar/quitar valores; 2+ valores = series por separado) ---
                 const P = PALETA_GRAFICAS;
                 const graficas = [
-                    { clave: 'estatus', canvasId: 'chartEstatus', campo: 'estatusVacante', n: 12, tipo: 'dona' },
-                    { clave: 'prioridad', canvasId: 'chartPrioridad', campo: 'prioridadEfectiva', n: 5, tipo: 'dona' },
-                    { clave: 'viatica', canvasId: 'chartViatica', campo: 'viatica', n: 5, tipo: 'dona' },
-                    { clave: 'referida', canvasId: 'chartReferida', campo: 'vacanteReferida', n: 5, tipo: 'dona' },
-                    { clave: 'fuenteIngreso', canvasId: 'chartFuenteIngreso', campo: 'fuenteIngreso', n: 8, tipo: 'barra', color: P[6] },
-                    { clave: 'ciudad', canvasId: 'chartCiudad', campo: 'ciudad', n: 8, tipo: 'barra', color: P[0] },
-                    { clave: 'cliente', canvasId: 'chartCliente', campo: 'cliente', n: 8, tipo: 'barra', color: P[1] },
-                    { clave: 'tienda', canvasId: 'chartTienda', campo: 'sucursal', n: 8, tipo: 'barra', color: P[4] },
-                    { clave: 'formato', canvasId: 'chartFormato', campo: 'formato', n: 8, tipo: 'barra', color: P[5] },
-                    { clave: 'gerente', canvasId: 'chartGerente', campo: 'gerenteDirector', n: 8, tipo: 'barra', color: P[2] },
+                    { clave: 'estatus', canvasId: 'chartEstatus', campo: 'estatusVacante', n: 9999, tipo: 'dona' },
+                    { clave: 'prioridad', canvasId: 'chartPrioridad', campo: 'prioridadEfectiva', n: 9999, tipo: 'dona' },
+                    { clave: 'viatica', canvasId: 'chartViatica', campo: 'viatica', n: 9999, tipo: 'dona' },
+                    { clave: 'referida', canvasId: 'chartReferida', campo: 'vacanteReferida', n: 9999, tipo: 'dona' },
+                    { clave: 'fuenteIngreso', canvasId: 'chartFuenteIngreso', campo: 'fuenteIngreso', n: 9999, tipo: 'barra', color: P[6] },
+                    { clave: 'estadoGeografico', canvasId: 'chartCiudad', campo: 'estadoGeografico', n: 9999, tipo: 'barra', color: P[0] },
+                    { clave: 'cliente', canvasId: 'chartCliente', campo: 'cliente', n: 9999, tipo: 'barra', color: P[1] },
+                    { clave: 'tienda', canvasId: 'chartTienda', campo: 'sucursal', n: 9999, tipo: 'barra', color: P[4] },
+                    { clave: 'formato', canvasId: 'chartFormato', campo: 'formato', n: 9999, tipo: 'barra', color: P[5] },
+                    { clave: 'gerente', canvasId: 'chartGerente', campo: 'gerenteDirector', n: 9999, tipo: 'barra', color: P[2] },
                     // Motivo de Reapertura: solo vacantes en estatus de reapertura (categorías tal como vengan
                     // del catálogo "MOTIVO REAPERTURA" de la hoja CATALOGOS, ej. "No se presentó").
-                    { clave: 'motivoReapertura', canvasId: 'chartMotivoReapertura', campo: 'motivoReapertura', n: 10, tipo: 'barra', color: P[6], etiqueta: 'Reaperturas',
+                    { clave: 'motivoReapertura', canvasId: 'chartMotivoReapertura', campo: 'motivoReapertura', n: 9999, tipo: 'barra', color: P[6], etiqueta: 'Reaperturas',
                       filtrarLista: lista => lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)) }
                 ];
                 graficas.forEach(cfg => dibujarGraficaCategorica(cfg, basePeriodo));
+
+                dibujarMapaVacantes(basePeriodo);
             }
 
             // Normaliza un registro proveniente del Google Sheet (columnas en PascalCase)
@@ -1499,6 +1856,13 @@
                     // incluye valores como "No se presentó". Se lee de la hoja si el backend
                     // ya lo está guardando en una columna con alguno de estos nombres.
                     motivoReapertura: row.MotivoReapertura || row['Motivo Reapertura'] || row.MotivoDeReapertura || '',
+                    // NUEVO: columna "EstatusReapertura" (P) en REGISTRO VACANTES —
+                    // captura el desenlace de la reapertura por separado del estatus
+                    // principal (ej. CUBIERTA cuando esa reapertura ya se cubrió),
+                    // sin depender de que EstatusVacante siga en estatus de reapertura.
+                    estatusReapertura: row.EstatusReapertura || row['Estatus Reapertura'] || '',
+                    // Folio de la vacante de la que nació esta reapertura (vacío si no es reapertura).
+                    folioOrigen: row.FolioOrigen || row['Folio Origen'] || '',
                     // NUEVO (02/09/2026): Viática, Vacante Referida y datos del referido.
                     viatica: row.Viatica || '',
                     vacanteReferida: row.VacanteReferida || '',
@@ -1682,24 +2046,26 @@
                 // el backend confirma la reapertura; si no, se cierra sola.
                 const ventanaWhats = window.open('', '_blank');
                 if (ventanaWhats) {
-                    ventanaWhats.document.write('Confirmando reapertura, un momento...');
+                    ventanaWhats.document.write('Generando folio nuevo, un momento...');
                 }
 
                 try {
-                    const resultado = await reabrirVacanteEnSheet(v.id, motivoCategoria, detalle);
+                    const nueva = construirVacanteReabierta(v, motivoCategoria, detalle);
+                    const resultado = await reabrirVacanteEnSheet(v, nueva, motivoCategoria, detalle);
                     if (resultado && resultado.ok) {
+                        nueva.id = resultado.nuevoFolio || resultado.folio || '(ver en la tabla)';
                         state.showReaperturaModal = false;
                         state.reaperturaLoading = false;
                         render();
                         if (ventanaWhats && !ventanaWhats.closed) {
-                            ventanaWhats.location.href = `https://wa.me/?text=${encodeURIComponent(armarMensajeReapertura(v, motivoCategoria, detalle))}`;
+                            ventanaWhats.location.href = `https://wa.me/?text=${encodeURIComponent(armarMensajeReapertura(v, motivoCategoria, detalle, nueva))}`;
                         } else {
                             // El navegador bloqueó incluso la ventana en blanco (poco
                             // común, pero puede pasar); se intenta el método directo
                             // como último recurso, aunque también podría bloquearse.
-                            enviarWhatsAppReapertura(v, motivoCategoria, detalle);
+                            enviarWhatsAppReapertura(v, motivoCategoria, detalle, nueva);
                         }
-                        alert(`Vacante ${v.id} reabierta correctamente.`);
+                        alert(`Vacante reabierta correctamente.\nFolio nuevo: ${nueva.id}\nFolio origen: ${v.id}`);
                         cargarVacantesDesdeSheet();
                     } else {
                         if (ventanaWhats && !ventanaWhats.closed) ventanaWhats.close();
@@ -2378,10 +2744,17 @@
                                 ` : `
                                     <div class="space-y-4">
                                         <div class="bg-[#0a0a0a] border border-gray-700 rounded-lg p-4 space-y-1">
-                                            <p class="text-white text-sm"><span class="text-gray-400">Folio:</span> ${state.reaperturaVacante.id}</p>
+                                            <p class="text-white text-sm"><span class="text-gray-400">Folio origen:</span> ${state.reaperturaVacante.id}</p>
                                             <p class="text-white text-sm"><span class="text-gray-400">Vacante:</span> ${state.reaperturaVacante.vacante || ''}</p>
                                             <p class="text-white text-sm"><span class="text-gray-400">Sucursal:</span> ${state.reaperturaVacante.sucursal || ''}</p>
+                                            <p class="text-white text-sm"><span class="text-gray-400">Ciudad:</span> ${state.reaperturaVacante.ciudad || ''}</p>
+                                            <p class="text-white text-sm"><span class="text-gray-400">Cliente:</span> ${state.reaperturaVacante.cliente || ''}</p>
+                                            <p class="text-white text-sm"><span class="text-gray-400">Gerente/Director:</span> ${state.reaperturaVacante.gerenteDirector || ''}</p>
+                                            <p class="text-white text-sm"><span class="text-gray-400">Prioridad:</span> ${state.reaperturaVacante.prioridad || ''}</p>
                                             <p class="text-white text-sm"><span class="text-gray-400">Estatus actual:</span> <span class="px-2 py-0.5 rounded-full text-xs ${getEstatusColor(state.reaperturaVacante.estatusVacante)}">${state.reaperturaVacante.estatusVacante}</span></p>
+                                        </div>
+                                        <div class="${state.theme === 'light' ? 'bg-blue-50 border border-blue-300 text-blue-700' : 'bg-blue-900/30 border border-blue-800 text-blue-300'} text-sm rounded-lg p-3">
+                                            Se creará un <b>folio nuevo</b> con todos los datos de esta vacante (Fecha Solicitud de hoy y Fecha Límite según la prioridad). El folio ${state.reaperturaVacante.id} se conserva sin cambios.
                                         </div>
                                         <div>
                                             <label class="block text-gray-300 text-sm mb-2">Motivo de Reapertura</label>
@@ -2403,7 +2776,7 @@
                                         ` : ''}
                                         <div class="flex gap-3 mt-2">
                                             <button onclick="confirmarReapertura()" ${state.reaperturaLoading ? 'disabled' : ''} class="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-60">
-                                                ${state.reaperturaLoading ? 'Reabriendo...' : 'Confirmar Reapertura'}
+                                                ${state.reaperturaLoading ? 'Generando folio nuevo...' : 'Confirmar Reapertura'}
                                             </button>
                                             <button onclick="reintentarReapertura()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600">Volver</button>
                                         </div>
@@ -2731,6 +3104,66 @@
             }
 
             setInterval(() => { if (state.currentUser) cargarVacantesDesdeSheet(); }, 30000);
+        </script>
+
+        <script>
+            /* --- Forzar actualización: compara la versión cargada contra la publicada --- */
+            (function () {
+                const INTERVALO_MS = 60000;   // revisa cada 60 s
+                const CUENTA_REGRESIVA = 15;  // segundos antes de recargar solo
+                let avisoMostrado = false;
+
+                function recargarLimpio() {
+                    try {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('_v', Date.now());
+                        window.location.replace(url.toString());
+                    } catch (e) { window.location.reload(); }
+                }
+
+                function mostrarAviso() {
+                    if (avisoMostrado) return;
+                    avisoMostrado = true;
+                    const ov = document.createElement('div');
+                    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:16px;font-family:system-ui,sans-serif;';
+                    ov.innerHTML =
+                        '<div style="background:#1a1a1a;color:#fff;border:1px solid #8CC63F;border-radius:14px;max-width:420px;width:100%;padding:28px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.6);">' +
+                        '<div style="font-size:40px;line-height:1;margin-bottom:10px;">🔄</div>' +
+                        '<h2 style="font-size:20px;font-weight:700;margin:0 0 8px;">Hay una nueva versión disponible</h2>' +
+                        '<p style="font-size:14px;color:#d1d5db;margin:0 0 18px;">Es necesario actualizar para seguir usando el sistema. Tu sesión se conserva.</p>' +
+                        '<button id="btnActualizarYa" style="background:#8CC63F;color:#111;font-weight:700;border:0;border-radius:8px;padding:10px 22px;font-size:15px;cursor:pointer;">Actualizar ahora</button>' +
+                        '<p style="font-size:12px;color:#9ca3af;margin:14px 0 0;">Se actualizará automáticamente en <span id="cuentaAct">' + CUENTA_REGRESIVA + '</span> s</p>' +
+                        '</div>';
+                    document.body.appendChild(ov);
+                    document.getElementById('btnActualizarYa').addEventListener('click', recargarLimpio);
+                    let s = CUENTA_REGRESIVA;
+                    setInterval(function () {
+                        s--;
+                        const el = document.getElementById('cuentaAct');
+                        if (el) el.textContent = Math.max(s, 0);
+                        if (s <= 0) recargarLimpio();
+                    }, 1000);
+                }
+
+                async function verificarVersion() {
+                    if (avisoMostrado) return;
+                    try {
+                        const url = window.location.origin + window.location.pathname + '?_chk=' + Date.now();
+                        const res = await fetch(url, { cache: 'no-store' });
+                        if (!res.ok) return;
+                        const txt = await res.text();
+                        const m = txt.match(/const APP_VERSION = '([^']+)'/);
+                        if (m && m[1] !== APP_VERSION) mostrarAviso();
+                    } catch (e) { /* sin red o archivo local: se ignora */ }
+                }
+
+                verificarVersion();
+                setInterval(verificarVersion, INTERVALO_MS);
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) verificarVersion();
+                });
+                window.addEventListener('focus', verificarVersion);
+            })();
         </script>
     </body>
     </html>
