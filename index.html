@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. 2026-09-28.2). <<< */
-            const APP_VERSION = '2026-09-30.2';
+            const APP_VERSION = '2026-10-03.1';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -2411,6 +2411,7 @@
                                 <button onclick="cambiarVista('vacantes')" class="px-4 py-2 text-sm transition-colors ${state.view === 'vacantes' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}">Vacantes</button>
                                 <button onclick="cambiarVista('dashboard')" class="px-4 py-2 text-sm transition-colors ${state.view === 'dashboard' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}">Dashboard</button>
                             </div>
+                            <a href="CRM_2.html" target="_blank" rel="noopener" title="Abrir el CRM de Reclutamiento" class="px-4 py-2 text-sm rounded-lg font-semibold transition-colors" style="background:#16a34a;color:#ffffff;">CRM Reclutamiento</a>
                             <button onclick="toggleTheme()" title="Cambiar tema" class="p-2 text-gray-400 hover:text-white bg-[#1a1a1a] border border-gray-800 rounded-lg">
                                 ${state.theme === 'dark' ? icons.sun : icons.moon}
                             </button>
@@ -2559,6 +2560,7 @@
                             <table class="w-full">
                                 <thead class="sticky top-0 z-10">
                                     <tr class="bg-gradient-to-r from-blue-700 to-blue-800">
+                                        <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">CRM</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">FOLIO</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">VACANTE</th>
                                         <th class="px-4 py-3 text-left text-sm text-white whitespace-nowrap sticky top-0 z-10 bg-blue-800">GERENTE OPERATIVO/DIRECTOR</th>
@@ -2585,6 +2587,9 @@
                                 <tbody>
                                     ${fv.map((v, i) => `
                                         <tr class="border-b border-gray-800 hover:bg-[#252525] transition-colors ${i % 2 === 0 ? 'bg-[#1a1a1a]' : 'bg-[#0f0f0f]'}">
+                                            <td class="px-4 py-3 text-sm whitespace-nowrap">
+                                                <a href="CRM_2.html?folio=${encodeURIComponent(v.id)}" target="_blank" rel="noopener" title="Ver y registrar candidatos de esta vacante en el CRM" class="px-3 py-1 rounded-lg text-xs font-semibold" style="background:#16a34a;color:#ffffff;">👥 Candidatos</a>
+                                            </td>
                                             <td class="px-4 py-3 text-sm text-blue-400 font-semibold whitespace-nowrap">${v.id}</td>
                                             <td class="px-4 py-3 text-sm text-white">${v.vacante || ''}</td>
                                             <td class="px-4 py-3 text-sm text-white">${v.gerenteDirector}</td>
