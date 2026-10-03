@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. 2026-09-28.2). <<< */
-            const APP_VERSION = '2026-10-03.1';
+            const APP_VERSION = '2026-10-03.2';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -132,7 +132,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzP2zhw2GUe0OyFy6z0FsrmTIlbvY86aamcQRrftHJYoWzJ5pUCCFHJbid4igmvJgKv/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbylabs5UJPgGChg64SSRZ6q0fUfMkS1FeXfVFeUrLb8Nf2tnYdFcSrMo7y6Ko7Zivvb/exec';
 
             function enviarWhatsAppVacante(v) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -1152,6 +1152,16 @@
                 render();
             };
 
+            // Selector directo de Viáticos (Todos / Sí / No): deja UN solo valor elegido,
+            // así no se mezclan "Sí" y "No" (con 2 valores las gráficas se separan por
+            // colores y se ve todo, que parece que no se filtró nada).
+            window.fijarViaticosDashboard = function(valor) {
+                state.dashboardFiltros = state.dashboardFiltros.filter(f => f.campo !== 'viatica');
+                if (valor) state.dashboardFiltros = [...state.dashboardFiltros, { campo: 'viatica', valor }];
+                actualizarCampoSeries('viatica');
+                render();
+            };
+
             // Quita toda la selección del dashboard.
             window.quitarFiltroDashboard = function() {
                 state.dashboardFiltros = [];
@@ -1324,6 +1334,7 @@
                 const botonImprimir = `
                     <div class="mb-4 flex items-center justify-between no-imprimir">
                         <span class="text-xs text-gray-500">${f.length ? '' : 'Tip: haz clic en una o varias barras/segmentos para filtrar todo el dashboard. Con 2 o más valores del mismo dato, las demás gráficas los muestran por separado (un color por valor). Haz clic de nuevo para quitar uno.'}</span>
+                        <span class="text-[10px] text-gray-600 mx-2">v2026-10-02d</span>
                         <button type="button" onclick="window.print()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                             ${icons.download} Descargar / Imprimir PDF
                         </button>
@@ -1331,8 +1342,8 @@
                 const camposFiltrados = Array.from(new Set(f.map(x => x.campo)));
                 const iconoX = icons.x.replace('width="24"', 'width="14"').replace('height="24"', 'height="14"');
                 const badgeFiltro = f.length ? `
-                    <div class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-                        <span class="text-gray-400">Filtros activos:</span>
+                    <div class="sticky top-0 z-30 mb-4 py-2 px-3 rounded-lg border shadow-lg flex flex-wrap items-center gap-x-4 gap-y-2 text-sm ${isLight ? 'bg-white border-gray-200' : 'bg-[#1a1a1a] border-gray-700'}">
+                        <span class="text-gray-400">Filtros activos (${vacantes.length} vacante${vacantes.length === 1 ? '' : 's'}):</span>
                         ${camposFiltrados.map(c => `
                             <span class="flex flex-wrap items-center gap-1.5">
                                 <span class="text-gray-400">${escHtmlDash(NOMBRES_CAMPO_DASHBOARD[c] || c)}:</span>
@@ -1348,6 +1359,24 @@
                         <button type="button" onclick="quitarFiltroDashboard()" class="text-blue-400 hover:underline no-imprimir">Limpiar todo</button>
                     </div>
                 ` : '';
+
+                // Selector rápido de Viáticos con conteos (sobre las demás selecciones/periodo).
+                const baseViaticos = aplicarFiltroPeriodoDashboard(aplicarFiltroDashboard(getFilteredVacanciesBase(), 'viatica'));
+                const nViaticos = val => baseViaticos.filter(v => valorNormalizado(v, 'viatica') === val).length;
+                const viaticosSel = valoresFiltroDe('viatica');
+                const btnViaticos = (etiqueta, valor, n) => {
+                    const activo = valor === '' ? viaticosSel.length === 0 : (viaticosSel.length === 1 && viaticosSel[0] === valor);
+                    return `<button type="button" onclick="fijarViaticosDashboard(${escHtmlDash(JSON.stringify(valor))})"
+                        class="px-3 py-1.5 text-sm transition-colors ${activo ? 'bg-blue-600 text-white' : (isLight ? 'bg-white text-gray-600 hover:bg-gray-100' : 'bg-[#1a1a1a] text-gray-300 hover:bg-[#252525]')}">${etiqueta}${n === null ? '' : ` (${n})`}</button>`;
+                };
+                const selectorViaticos = `
+                    <div class="mb-4 flex flex-wrap items-center gap-2 no-imprimir">
+                        <span class="text-gray-400 text-sm">Genera viáticos:</span>
+                        <div class="flex rounded-lg overflow-hidden border ${isLight ? 'border-gray-300' : 'border-gray-700'}">
+                            ${btnViaticos('Todos', '', null)}${btnViaticos('Sí', 'Sí', nViaticos('Sí'))}${btnViaticos('No', 'No', nViaticos('No'))}
+                        </div>
+                        <span class="text-xs text-gray-500">Todas las gráficas y el mapa se filtran con esta selección.</span>
+                    </div>`;
 
                 const periodoActual = state.dashboardPeriodo || 'mes';
                 const periodoSel = state.dashboardPeriodoSel;
@@ -1406,6 +1435,7 @@
 
                 return `
                     ${botonImprimir}
+                    ${selectorViaticos}
                     ${selectorPeriodo}
                     ${badgeFiltro}
                     ${badgePeriodo}
@@ -1506,7 +1536,8 @@
                             <p id="avisoCiudadesSinMapa" class="hidden text-xs text-amber-500 mt-2"></p>
                         </div>
                     </div>
-                `;
+                
+`;
             }
 
             // Instancia de Leaflet del mapa del dashboard (se recrea en cada render,
@@ -1591,7 +1622,11 @@
                 const canvas = document.getElementById(cfg.canvasId);
                 if (!canvas) return;
                 const prep = prepararGraficaCategorica(cfg, basePeriodo);
-                if (!prep.labels.length) return;
+                if (!prep.labels.length) {
+                    // Antes la tarjeta quedaba en blanco sin explicación.
+                    if (canvas.parentElement) canvas.parentElement.innerHTML = `<p class="text-sm text-gray-500 text-center pt-10">${escHtmlDash(cfg.vacio || 'Sin datos para los filtros actuales.')}</p>`;
+                    return;
+                }
 
                 const { labels, datasets: dsPrep, propios, hayPropio, esCampoSeries } = prep;
                 const enSeries = dsPrep.length > 1;
@@ -1611,10 +1646,19 @@
                         const c = paleta[i % paleta.length];
                         return estaSel(l) ? c : c + DIM;
                     });
+                    const opcionesDona = opcionesBaseChart({ scales: {} });
+                    // Clic en la leyenda = filtrar el dashboard por ese valor (por defecto
+                    // Chart.js solo ocultaba el segmento y no movía las demás gráficas).
+                    opcionesDona.plugins.legend.onClick = (e, item, legend) => {
+                        const val = legend.chart.data.labels[item.index];
+                        filtrarDashboardPor(cfg.campo, val);
+                    };
+                    opcionesDona.plugins.legend.onHover = (e) => { e.native.target.style.cursor = 'pointer'; };
+                    opcionesDona.plugins.legend.onLeave = (e) => { e.native.target.style.cursor = 'default'; };
                     dashboardCharts[cfg.clave] = new Chart(canvas, {
                         type: 'doughnut',
                         data: { labels, datasets: [{ data: dsPrep[0].data, backgroundColor: colores, datalabels: DATALABELS_CONTEO }] },
-                        options: { ...opcionesBaseChart({ scales: {} }), ...interaccion }
+                        options: { ...opcionesDona, ...interaccion }
                     });
                     return;
                 }
@@ -1820,11 +1864,33 @@
                     // Motivo de Reapertura: solo vacantes en estatus de reapertura (categorías tal como vengan
                     // del catálogo "MOTIVO REAPERTURA" de la hoja CATALOGOS, ej. "No se presentó").
                     { clave: 'motivoReapertura', canvasId: 'chartMotivoReapertura', campo: 'motivoReapertura', n: 9999, tipo: 'barra', color: P[6], etiqueta: 'Reaperturas',
-                      filtrarLista: lista => lista.filter(v => ESTATUS_DE_REAPERTURA.includes(v.estatusVacante)) }
+                      vacio: 'No hay vacantes reabiertas con motivo capturado para los filtros actuales.',
+                      filtrarLista: lista => lista.filter(fueReabiertaAlgunaVez) }
                 ];
                 graficas.forEach(cfg => dibujarGraficaCategorica(cfg, basePeriodo));
 
                 dibujarMapaVacantes(basePeriodo);
+            }
+
+            // Busca el valor de una columna del Sheet cuyo encabezado contenga un fragmento,
+            // ignorando acentos, mayúsculas, espacios y símbolos (ej. 'viatic' encuentra
+            // Viatica, Viática, "Genera Viáticos para cubrir la vacante", etc.).
+            function buscarValorSheet(row, fragmento) {
+                const limpiar = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                const frag = limpiar(fragmento);
+                const clave = Object.keys(row || {}).find(k => limpiar(k).includes(frag) && row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '');
+                return clave !== undefined ? row[clave] : '';
+            }
+
+            // Unifica variantes de Sí/No (SI, si, Sí, true, NO, no, false...) para que la
+            // gráfica y el filtro cuenten cada respuesta como un solo valor.
+            function normalizarSiNo(valor) {
+                const t = String(valor == null ? '' : valor).trim();
+                if (!t) return '';
+                const base = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                if (['si', 'true', 'yes', '1'].includes(base)) return 'Sí';
+                if (['no', 'false', '0'].includes(base)) return 'No';
+                return t;
             }
 
             // Normaliza un registro proveniente del Google Sheet (columnas en PascalCase)
@@ -1855,7 +1921,7 @@
                     // Motivo capturado al reabrir la vacante (catálogo "MOTIVO REAPERTURA"),
                     // incluye valores como "No se presentó". Se lee de la hoja si el backend
                     // ya lo está guardando en una columna con alguno de estos nombres.
-                    motivoReapertura: row.MotivoReapertura || row['Motivo Reapertura'] || row.MotivoDeReapertura || '',
+                    motivoReapertura: row.MotivoReapertura || row['Motivo Reapertura'] || row.MotivoDeReapertura || buscarValorSheet(row, 'motivoreapertura') || buscarValorSheet(row, 'motivodereapertura') || '',
                     // NUEVO: columna "EstatusReapertura" (P) en REGISTRO VACANTES —
                     // captura el desenlace de la reapertura por separado del estatus
                     // principal (ej. CUBIERTA cuando esa reapertura ya se cubrió),
@@ -1864,8 +1930,8 @@
                     // Folio de la vacante de la que nació esta reapertura (vacío si no es reapertura).
                     folioOrigen: row.FolioOrigen || row['Folio Origen'] || '',
                     // NUEVO (02/09/2026): Viática, Vacante Referida y datos del referido.
-                    viatica: row.Viatica || '',
-                    vacanteReferida: row.VacanteReferida || '',
+                    viatica: normalizarSiNo(row.Viatica || buscarValorSheet(row, 'viatic')),
+                    vacanteReferida: normalizarSiNo(row.VacanteReferida || buscarValorSheet(row, 'vacantereferida')),
                     referidoNombre: row.ReferidoNombre || '',
                     referidoTelefono: row.ReferidoTelefono || '',
                     // NUEVO: Fecha de Captura de Cubrimiento, Fuente de Ingreso y Link de Ficha de Contratación.
