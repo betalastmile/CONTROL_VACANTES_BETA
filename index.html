@@ -7,8 +7,8 @@
         <meta http-equiv="Pragma" content="no-cache">
         <meta http-equiv="Expires" content="0">
         <script>
-            /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. 2026-09-28.2). <<< */
-            const APP_VERSION = 'BETA.V1.2';
+            /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
+            const APP_VERSION = 'BETA.V2.3';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -3201,13 +3201,17 @@
                 async function verificarVersion() {
                     if (avisoMostrado) return;
                     try {
-                        const url = window.location.origin + window.location.pathname + '?_chk=' + Date.now();
-                        const res = await fetch(url, { cache: 'no-store' });
-                        if (!res.ok) return;
+                        // Parámetro único + no-store + no-cache para saltarse cachés del navegador/CDN.
+                        const url = window.location.origin + window.location.pathname + '?_chk=' + Date.now() + '_' + Math.random().toString(36).slice(2);
+                        const res = await fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
+                        if (!res.ok) { console.warn('[Versión] No se pudo consultar la versión publicada. HTTP', res.status); return; }
                         const txt = await res.text();
-                        const m = txt.match(/const APP_VERSION = '([^']+)'/);
-                        if (m && m[1] !== APP_VERSION) mostrarAviso();
-                    } catch (e) { /* sin red o archivo local: se ignora */ }
+                        // Acepta comillas simples o dobles y espacios variables.
+                        const m = txt.match(/const\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+                        if (!m) { console.warn('[Versión] No se encontró APP_VERSION en el archivo publicado (¿URL distinta o página dentro de un iframe?).'); return; }
+                        console.info('[Versión] cargada:', APP_VERSION, '| publicada:', m[1]);
+                        if (m[1].trim() !== String(APP_VERSION).trim()) mostrarAviso();
+                    } catch (e) { console.warn('[Versión] Error al verificar:', e); }
                 }
 
                 verificarVersion();
