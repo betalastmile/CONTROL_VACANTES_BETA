@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V2.3';
+            const APP_VERSION = 'BETA.V1.2';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -1334,7 +1334,7 @@
                 const botonImprimir = `
                     <div class="mb-4 flex items-center justify-between no-imprimir">
                         <span class="text-xs text-gray-500">${f.length ? '' : 'Tip: haz clic en una o varias barras/segmentos para filtrar todo el dashboard. Con 2 o más valores del mismo dato, las demás gráficas los muestran por separado (un color por valor). Haz clic de nuevo para quitar uno.'}</span>
-                        <span class="text-[10px] text-gray-600 mx-2">v2026-10-02d</span>
+                        <span class="text-[10px] text-gray-600 mx-2">${APP_VERSION}</span>
                         <button type="button" onclick="window.print()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                             ${icons.download} Descargar / Imprimir PDF
                         </button>
