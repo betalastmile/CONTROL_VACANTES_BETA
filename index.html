@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.2';
+            const APP_VERSION = 'BETA.V1.3';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -494,13 +494,20 @@
                 return res.json();
             }
 
+            // Día local (YYYY-MM-DD) del navegador; se usa para cerrar la sesión a las 00:00.
+            function diaLocalHoy_() {
+                const d = new Date();
+                return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            }
+
             window.cerrarSesion = function() {
                 state.currentUser = null;
                 localStorage.removeItem('vacantes_currentUser');
+                localStorage.removeItem('vacantes_sesionDia');
                 render();
             };
 
-            const estatusOptions = ['VIGENTE', 'CANCELADA', 'CUBIERTA', 'PAUSADO', 'PAUSADO JOIN US', 'FORMALIZADO', 'NEGOCIACION ALIADO EXTERNO', 'REGULARIZACION', 'VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
+            const estatusOptions = ['VIGENTE', 'CANCELADA', 'CUBIERTA', 'PAUSADO', 'PAUSADO JOIN US', 'PAUSADO COMERCIAL', 'FORMALIZADO', 'NEGOCIACION ALIADO EXTERNO', 'REGULARIZACION', 'VIGENTE-REAPERTURADO', 'FORMALIZADO POR AP-POR REAPERTURA'];
 
             function getPrioridadColor(prioridad) {
                 const colors = { 'ALTA': 'bg-red-100 text-red-800', 'MEDIA': 'bg-yellow-100 text-yellow-800', 'BAJA': 'bg-green-100 text-green-800' };
@@ -511,12 +518,12 @@
                 const isLight = state.theme === 'light';
                 const colorsDark = {
                     'VIGENTE': 'bg-blue-500 text-white', 'CANCELADA': 'bg-red-500 text-white', 'CUBIERTA': 'bg-gray-500 text-white',
-                    'PAUSADO': 'bg-yellow-500 text-white', 'PAUSADO JOIN US': 'bg-amber-600 text-white', 'FORMALIZADO': 'bg-green-500 text-white', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-500 text-white',
+                    'PAUSADO': 'bg-yellow-500 text-white', 'PAUSADO JOIN US': 'bg-amber-600 text-white', 'PAUSADO COMERCIAL': 'bg-slate-500 text-white', 'FORMALIZADO': 'bg-green-500 text-white', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-500 text-white',
                     'REGULARIZACION': 'bg-orange-500 text-white', 'VIGENTE-REAPERTURADO': 'bg-cyan-500 text-white', 'FORMALIZADO POR AP-POR REAPERTURA': 'bg-pink-500 text-white'
                 };
                 const colorsLight = {
                     'VIGENTE': 'bg-blue-100 text-blue-800', 'CANCELADA': 'bg-red-100 text-red-800', 'CUBIERTA': 'bg-gray-200 text-gray-700',
-                    'PAUSADO': 'bg-yellow-100 text-yellow-800', 'PAUSADO JOIN US': 'bg-amber-200 text-amber-900', 'FORMALIZADO': 'bg-green-100 text-green-800', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-100 text-purple-800',
+                    'PAUSADO': 'bg-yellow-100 text-yellow-800', 'PAUSADO JOIN US': 'bg-amber-200 text-amber-900', 'PAUSADO COMERCIAL': 'bg-slate-200 text-slate-800', 'FORMALIZADO': 'bg-green-100 text-green-800', 'NEGOCIACION ALIADO EXTERNO': 'bg-purple-100 text-purple-800',
                     'REGULARIZACION': 'bg-orange-100 text-orange-800', 'VIGENTE-REAPERTURADO': 'bg-cyan-100 text-cyan-800', 'FORMALIZADO POR AP-POR REAPERTURA': 'bg-pink-100 text-pink-800'
                 };
                 const colors = isLight ? colorsLight : colorsDark;
@@ -2393,6 +2400,7 @@
                         if (resultado && resultado.ok) {
                             state.currentUser = { usuario, nombre: resultado.nombre || usuario };
                             localStorage.setItem('vacantes_currentUser', JSON.stringify(state.currentUser));
+                            localStorage.setItem('vacantes_sesionDia', diaLocalHoy_());
                             state.loginLoading = false;
                             render();
                             cargarVacantesDesdeSheet();
@@ -3141,7 +3149,13 @@
                 try {
                     const guardado = localStorage.getItem('vacantes_currentUser');
                     if (guardado) {
-                        state.currentUser = JSON.parse(guardado);
+                        if (localStorage.getItem('vacantes_sesionDia') === diaLocalHoy_()) {
+                            state.currentUser = JSON.parse(guardado);
+                        } else {
+                            // Sesión de un día anterior: se descarta para volver a pedir login.
+                            localStorage.removeItem('vacantes_currentUser');
+                            localStorage.removeItem('vacantes_sesionDia');
+                        }
                     }
                 } catch (err) {
                     console.error('Error al restaurar la sesión:', err);
@@ -3157,6 +3171,18 @@
             }
 
             setInterval(() => { if (state.currentUser) cargarVacantesDesdeSheet(); }, 30000);
+
+            // Cierre de sesión automático a las 00:00: si cambia el día con la página abierta,
+            // se cierra la sesión y se recarga para traer la versión y los datos más recientes.
+            function revisarCambioDeDia_() {
+                if (!state.currentUser) return;
+                if (localStorage.getItem('vacantes_sesionDia') !== diaLocalHoy_()) {
+                    cerrarSesion();
+                    location.reload();
+                }
+            }
+            setInterval(revisarCambioDeDia_, 15000);
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) revisarCambioDeDia_(); });
         </script>
 
         <script>
