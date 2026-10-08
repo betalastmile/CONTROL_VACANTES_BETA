@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.3';
+            const APP_VERSION = 'BETA.V1.4';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -132,7 +132,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbylabs5UJPgGChg64SSRZ6q0fUfMkS1FeXfVFeUrLb8Nf2tnYdFcSrMo7y6Ko7Zivvb/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwO7pwf1zxv7ve7oVS1aB4cRPVJ2w9EAk2QGfwuEsO35bdD82ZcrfxdftanVyBnKaYj/exec';
 
             function enviarWhatsAppVacante(v) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -311,6 +311,8 @@
                     motivoReapertura,
                     detalleReapertura: detalleReapertura || '',
                     folioOrigen: origen.id,
+                    folReaperturado: origen.id,
+                    FolReaperturado: origen.id,
                     usuarioCarga: state.currentUser ? state.currentUser.usuario : '',
                     nombreCarga: state.currentUser ? state.currentUser.nombre : ''
                 };
@@ -328,6 +330,8 @@
                         accion: 'reabrir_con_nuevo_folio',
                         id: origen.id,
                         folioOrigen: origen.id,
+                        folReaperturado: origen.id,
+                        FolReaperturado: origen.id,
                         vacanteNueva,
                         motivoReapertura,
                         detalleReapertura: detalleReapertura || '',
@@ -1922,7 +1926,7 @@
                     // sin depender de que EstatusVacante siga en estatus de reapertura.
                     estatusReapertura: row.EstatusReapertura || row['Estatus Reapertura'] || '',
                     // Folio de la vacante de la que nació esta reapertura (vacío si no es reapertura).
-                    folioOrigen: row.FolioOrigen || row['Folio Origen'] || '',
+                    folioOrigen: row.FolReaperturado || row['Fol Reaperturado'] || row['FOLIO REAPERTURADO'] || buscarValorSheet(row, 'folreaperturado') || row.FolioOrigen || row['Folio Origen'] || '',
                     // NUEVO (02/09/2026): Viática, Vacante Referida y datos del referido.
                     viatica: normalizarSiNo(row.Viatica || buscarValorSheet(row, 'viatic')),
                     vacanteReferida: normalizarSiNo(row.VacanteReferida || buscarValorSheet(row, 'vacantereferida')),
