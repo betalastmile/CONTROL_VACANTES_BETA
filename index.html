@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.4';
+            const APP_VERSION = 'BETA.V1.6';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -134,7 +134,7 @@
             sistemas lean/escriban en la misma hoja. */
             const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyqyLF9dyHfI0aIe4WzWgox1M-n9EHfcOoT1dxkvimhbJ1DCvUFtsCwwN_IeNRIskEb/exec';
 
-            function enviarWhatsAppVacante(v) {
+            function enviarWhatsAppVacante(v, ventana) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
                     `Folio: ${v.id}\n` +
                     `Vacante: ${v.vacante || ''}\n` +
@@ -154,7 +154,9 @@
                     `${v.vacanteReferida === 'Sí' ? `\nFolio de Join Us: ${v.referidoNombre || ''}` : ''}\n` +
                     `Observaciones Adicionales: ${v.requerimiento}`;
                 // Se abre WhatsApp sin número predefinido para que el usuario elija a quién enviarlo
-                window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
+                const urlWhats = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
+                if (ventana && !ventana.closed) { ventana.location.href = urlWhats; }
+                else { window.open(urlWhats, '_blank'); }
             }
 
             // Arma el texto del mensaje de reapertura (sin abrir ninguna ventana),
@@ -220,13 +222,15 @@
                 window.open(`https://wa.me/?text=${encodeURIComponent(armarMensajeCancelacion(v, motivo))}`, '_blank');
             }
 
-            function notificarCRM2Vacante(v) {
-                fetch(NOTIF_APPS_SCRIPT_URL, {
+            // Guarda la vacante nueva en el Sheet (Code.gs) y DEVUELVE la respuesta
+            // del servidor, que trae el folio REAL ({ ok:true, folio:'FOL0842' }).
+            // El folio lo genera SOLO el backend; el navegador nunca lo calcula.
+            async function guardarVacanteEnSheet(v) {
+                const res = await fetch(NOTIF_APPS_SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({
                         accion: 'nueva_vacante',
-                        id: v.id,
                         requerimiento: v.requerimiento,
                         vacante: v.vacante || '',
                         gerenteDirector: v.gerenteDirector,
@@ -249,10 +253,10 @@
                         fechaNotificacion: new Date().toISOString(),
                         viatica: v.viatica || '',
                         vacanteReferida: v.vacanteReferida || '',
-                        referidoNombre: v.referidoNombre || '',
-                        referidoTelefono: v.referidoTelefono || ''
+                        referidoNombre: v.referidoNombre || ''
                     })
-                }).catch(err => console.error('Error al notificar al CRM2:', err));
+                });
+                return res.json();
             }
 
             // Estatus desde los cuales SÍ se permite reabrir una vacante.
@@ -3094,7 +3098,7 @@
                         });
                     }
 
-                    form.addEventListener('submit', e => {
+                    form.addEventListener('submit', async e => {
                         e.preventDefault();
                         const fd = new FormData(e.target);
 
@@ -3109,7 +3113,7 @@
                         // de ahí, solo el CRM2 puede cambiarlo.
                         const estatusInicial = fd.get('vacanteReferida') === 'Sí' ? 'PAUSADO JOIN US' : 'VIGENTE';
                         const nv = {
-                            id: 'FOL' + String(state.vacancies.length + 1).padStart(4, '0'),
+                            id: '', // el folio lo asigna el backend (Code.gs)
                             requerimiento: fd.get('requerimiento'),
                             vacanteReferida: fd.get('vacanteReferida'),
                             referidoNombre: fd.get('referidoNombre'),
@@ -3133,16 +3137,36 @@
                             usuarioCarga: state.currentUser ? state.currentUser.usuario : '',
                             nombreCarga: state.currentUser ? state.currentUser.nombre : ''
                         };
-                        state.vacancies.push(nv);
-                        state.showNewVacancyModal = false;
-                        render();
+                        // Evita doble clic mientras se guarda.
+                        const botonGuardar = e.submitter || form.querySelector('button[type="submit"]');
+                        if (botonGuardar) botonGuardar.disabled = true;
 
-                        // Al cargar una vacante nueva: enviar por WhatsApp y notificar al CRM2
-                        enviarWhatsAppVacante(nv);
-                        notificarCRM2Vacante(nv);
+                        // La ventana de WhatsApp se abre AQUÍ, síncrona (dentro del
+                        // clic), para que el navegador no la bloquee; se redirige a
+                        // wa.me hasta tener el folio REAL que devuelve el servidor.
+                        const ventanaWhats = window.open('', '_blank');
+                        if (ventanaWhats) ventanaWhats.document.write('Generando folio, un momento...');
 
-                        // Refrescar desde el Sheet para tomar el ID/registro definitivo
-                        setTimeout(cargarVacantesDesdeSheet, 1500);
+                        try {
+                            const resultado = await guardarVacanteEnSheet(nv);
+                            if (resultado && resultado.ok && resultado.folio) {
+                                nv.id = resultado.folio; // folio definitivo del Sheet
+                                state.vacancies.push(nv);
+                                state.showNewVacancyModal = false;
+                                render();
+                                enviarWhatsAppVacante(nv, ventanaWhats);
+                                setTimeout(cargarVacantesDesdeSheet, 1500);
+                            } else {
+                                if (ventanaWhats && !ventanaWhats.closed) ventanaWhats.close();
+                                if (botonGuardar) botonGuardar.disabled = false;
+                                alert((resultado && (resultado.mensaje || resultado.error)) || 'No se pudo guardar la vacante. Intenta de nuevo.');
+                            }
+                        } catch (err) {
+                            console.error('Error al guardar la vacante:', err);
+                            if (ventanaWhats && !ventanaWhats.closed) ventanaWhats.close();
+                            if (botonGuardar) botonGuardar.disabled = false;
+                            alert('Error de conexión al guardar la vacante. Revisa que no se haya guardado ya en el Sheet antes de reintentar.');
+                        }
                     });
                 }
             }
