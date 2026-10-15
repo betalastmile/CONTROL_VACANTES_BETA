@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.7';
+            const APP_VERSION = 'BETA.V1.8';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -150,7 +150,7 @@
                     `Estatus: ${v.estatusVacante}\n` +
                     `Fecha de solicitud: ${v.fechaSolicitud}\n` +
                     `Fecha límite de contratación: ${v.fechaVencimiento}\n` +
-                    `¿La vacante está disponible para ser referida a través de JOIN US?: ${v.vacanteReferida || ''}\n` +
+                    `¿La vacante era referida a través de JOIN US?: ${v.vacanteReferida || ''}\n` +
                     `Observaciones Adicionales: ${v.requerimiento}`;
                 // Se abre WhatsApp sin número predefinido para que el usuario elija a quién enviarlo
                 const urlWhats = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
