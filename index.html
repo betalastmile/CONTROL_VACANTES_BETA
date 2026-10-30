@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.11';
+            const APP_VERSION = 'BETA.V1.12';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -196,7 +196,7 @@
             Apps Script conectado al Google Sheet. Debe ser la MISMA URL que se
             configura en CRM_2.html (NOTIF_APPS_SCRIPT_URL) para que ambos
             sistemas lean/escriban en la misma hoja. */
-            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby5iWSUxpdsjyYBjf-XAz2UZA-mjlkXEW_bkDAOLzCdwNkcEQdeePKEwzSue-JXPCaX/exec';
+            const NOTIF_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxPLUJOZ3SmuOb2soMmYFr8j4JHj-PK-NvW1A2dIECOiDBvPITVj8fyIhmC3CEiKhHT/exec';
 
             function enviarWhatsAppVacante(v, ventana) {
                 const mensaje = `📋 *Nueva Vacante Cargada*\n\n` +
@@ -560,12 +560,25 @@
             // El backend (Code.gs) debe exponer la acción 'validar_login' que busque
             // el usuario en esa hoja y regrese { ok: true, nombre: '...' } o { ok: false }.
             async function validarLogin(usuario, password) {
-                const res = await fetch(NOTIF_APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ accion: 'validar_login', usuario, password })
-                });
-                return res.json();
+                // Hasta 3 intentos: si el servidor está ocupado o falla la red,
+                // se reintenta solo en vez de mostrar un error al usuario.
+                let ultimoError;
+                for (let intento = 0; intento < 3; intento++) {
+                    try {
+                        const res = await fetch(NOTIF_APPS_SCRIPT_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                            body: JSON.stringify({ accion: 'validar_login', usuario, password })
+                        });
+                        const data = await res.json();
+                        if (data && data.error) throw new Error(data.error); // fallo del servidor, NO contraseña mala
+                        return data;
+                    } catch (err) {
+                        ultimoError = err;
+                        await new Promise(r => setTimeout(r, 700 * (intento + 1)));
+                    }
+                }
+                throw ultimoError;
             }
 
             // Día local (YYYY-MM-DD) del navegador; se usa para cerrar la sesión a las 00:00.
@@ -853,12 +866,22 @@
             // "Fire and forget": no bloquea la interfaz ni reintenta si falla; en el
             // siguiente refresco (cargarVacantesDesdeSheet, cada 30s) se vuelve a
             // intentar si el cambio no llegó a guardarse.
+            // Los cambios se juntan ~800 ms y se mandan en UN SOLO POST
+            // (antes era un POST por folio, todos en paralelo, y saturaban el servidor).
+            let colaPrioridades_ = [];
+            let timerPrioridades_ = null;
             function persistirPrioridadEscalada_(id, nuevaPrioridad) {
-                fetch(NOTIF_APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ accion: 'actualizar_prioridad', id, prioridad: nuevaPrioridad })
-                }).catch(err => console.error('Error al persistir la escalación automática de prioridad:', err));
+                colaPrioridades_.push({ id, prioridad: nuevaPrioridad });
+                clearTimeout(timerPrioridades_);
+                timerPrioridades_ = setTimeout(() => {
+                    const lote = colaPrioridades_.splice(0);
+                    if (!lote.length) return;
+                    fetch(NOTIF_APPS_SCRIPT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({ accion: 'actualizar_prioridades', cambios: lote })
+                    }).catch(err => console.error('Error al persistir la escalación automática de prioridad:', err));
+                }, 800);
             }
 
             // Recalcula prioridadEfectiva para todas las vacantes en memoria y arma
@@ -3367,7 +3390,11 @@
                 cargarCatalogos();
             }
 
-            setInterval(() => { if (state.currentUser) cargarVacantesDesdeSheet(); }, 30000);
+            setInterval(() => { if (state.currentUser && !document.hidden) cargarVacantesDesdeSheet(); }, 30000);
+            // Al volver a la pestaña se refresca de inmediato (mientras estuvo oculta no se consultó).
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && state.currentUser) cargarVacantesDesdeSheet();
+            });
 
             // Cierre de sesión automático a las 00:00: si cambia el día con la página abierta,
             // se cierra la sesión y se recarga para traer la versión y los datos más recientes.
