@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.1.1';
+            const APP_VERSION = 'BETA.V1.1.';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -1994,8 +1994,10 @@
                 const enSeriesTendencia = seriesTendencia.length > 1;
                 const metrica = state.dashboardMetricaTendencia || 'nuevas';
                 const agruparMetrica = (lista, m) => {
-                    if (m === 'cubiertas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CUBIERTA'), 'fechaCubierta', periodo);
-                    if (m === 'canceladas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CANCELADA'), 'fechaCancelacion', periodo);
+                    // Cubiertas y Canceladas se agrupan por fecha de SOLICITUD (igual que Nuevas y la dona de estatus),
+                    // para que los totales del periodo coincidan entre la tendencia y las demás gráficas.
+                    if (m === 'cubiertas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CUBIERTA'), 'fechaSolicitud', periodo);
+                    if (m === 'canceladas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CANCELADA'), 'fechaSolicitud', periodo);
                     return agruparPorPeriodo(lista, 'fechaSolicitud', periodo);
                 };
                 const lineas = enSeriesTendencia
