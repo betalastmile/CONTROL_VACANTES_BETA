@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.12';
+            const APP_VERSION = 'BETA.V1.1.1';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -1995,7 +1995,7 @@
                 const metrica = state.dashboardMetricaTendencia || 'nuevas';
                 const agruparMetrica = (lista, m) => {
                     if (m === 'cubiertas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CUBIERTA'), 'fechaCubierta', periodo);
-                    if (m === 'canceladas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CANCELADA'), 'fechaSolicitud', periodo);
+                    if (m === 'canceladas') return agruparPorPeriodo(lista.filter(v => v.estatusVacante === 'CANCELADA'), 'fechaCancelacion', periodo);
                     return agruparPorPeriodo(lista, 'fechaSolicitud', periodo);
                 };
                 const lineas = enSeriesTendencia
@@ -2095,6 +2095,19 @@
                 return t;
             }
 
+            // Convierte una fecha del Sheet a 'YYYY-MM-DD' (formato que esperan las gráficas).
+            // Acepta ISO (con o sin hora), dd/mm/yyyy (texto del Sheet) y objetos Date.
+            function normalizarFechaISO(valor) {
+                if (valor === undefined || valor === null) return '';
+                const t = String(valor).trim();
+                if (!t) return '';
+                if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t;
+                const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+                if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+                const d = new Date(t);
+                return isNaN(d) ? '' : d.toISOString().split('T')[0];
+            }
+
             // Normaliza un registro proveniente del Google Sheet (columnas en PascalCase)
             // al formato interno usado por la vista.
             function normalizarVacanteDesdeSheet(row) {
@@ -2117,7 +2130,11 @@
                     prioridad: String(row.Prioridad || 'MEDIA').trim().toUpperCase(),
                     prioridadEfectiva: String(row.Prioridad || 'MEDIA').trim().toUpperCase(), // se recalcula en actualizarPrioridadesEfectivas()
                     estatusVacante: row.EstatusVacante || 'VIGENTE',
-                    fechaCubierta: row.FechaCubierta || '',
+                    // Fecha de cubierta: se lee de la columna AO "Fecha Real Cubierta" (ya no de P).
+                    // Es la que alimenta la línea "Cubiertas" de la tendencia y los días de cobertura.
+                    fechaCubierta: normalizarFechaISO(row['Fecha Real Cubierta'] || row['FECHA REAL CUBIERTA'] || row.FechaRealCubierta || buscarValorSheet(row, 'fecharealcubierta')),
+                    // Fecha de cancelación (columna AC "FechaCancelacion"): la usa la línea "Canceladas" de la tendencia.
+                    fechaCancelacion: normalizarFechaISO(row.FechaCancelacion || row['Fecha Cancelacion'] || row['FECHA CANCELACION'] || buscarValorSheet(row, 'fechacancelacion')),
                     usuarioCarga: row.UsuarioCarga || '',
                     nombreCarga: row.NombreCarga || '',
                     // Motivo capturado al reabrir la vacante (catálogo "MOTIVO REAPERTURA"),
