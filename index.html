@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V1.1.';
+            const APP_VERSION = 'BETA.V.1.1';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -922,6 +922,10 @@
                     // vacío si nunca se reabrió; si sí, el estatus de EstatusReapertura
                     // o, para folios anteriores a esa columna, el estatus principal.
                     v.estatusReaperturaEfectivo = fueReabiertaAlgunaVez(v) ? estatusDeLaReapertura(v) : '';
+                    // De las vacantes CUBIERTAS: ¿vinieron de una reapertura o no? (gráfica junto a Motivo Reapertura)
+                    v.cubiertaPorReapertura = v.estatusVacante === 'CUBIERTA'
+                        ? (fueReabiertaAlgunaVez(v) ? 'Cubiertas por reapertura' : 'Cubiertas sin reapertura')
+                        : '';
                 });
                 const nuevas = state.vacancies
                     .filter(requiereAlertaNoCubrir)
@@ -1324,6 +1328,7 @@
                 proyecto: 'Proyecto',
                 motivoReapertura: 'Motivo de Reapertura',
                 estatusReaperturaEfectivo: 'Desenlace de Reapertura',
+                cubiertaPorReapertura: 'Cubiertas: reapertura vs. sin reapertura',
                 viatica: 'Genera Viáticos para cubrir la vacante',
                 vacanteReferida: 'La vacante esta ya referida en Join Us',
                 fuenteIngreso: 'Fuente de Ingreso'
@@ -1699,10 +1704,14 @@
                         </div>
                     </div>
 
-                    <div class="mb-6 grid grid-cols-1 gap-4">
+                    <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="${cont} p-4 rounded-lg shadow-lg border">
                             <p class="text-white font-semibold mb-3">Motivo Reapertura</p>
                             <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartMotivoReapertura"></canvas></div></div>
+                        </div>
+                        <div class="${cont} p-4 rounded-lg shadow-lg border">
+                            <p class="text-white font-semibold mb-3">De las Cubiertas, ¿cuántas fueron de Reapertura?</p>
+                            <div style="height:300px;overflow:auto" class="grafica-scroll"><div style="height:100%;min-height:100%"><canvas id="chartCubiertasReapertura"></canvas></div></div>
                         </div>
                     </div>
                     <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2069,7 +2078,11 @@
                     // del catálogo "MOTIVO REAPERTURA" de la hoja CATALOGOS, ej. "No se presentó").
                     { clave: 'motivoReapertura', canvasId: 'chartMotivoReapertura', campo: 'motivoReapertura', n: 9999, tipo: 'barra', color: P[6], etiqueta: 'Reaperturas',
                       vacio: 'No hay vacantes reabiertas con motivo capturado para los filtros actuales.',
-                      filtrarLista: lista => lista.filter(fueReabiertaAlgunaVez) }
+                      filtrarLista: lista => lista.filter(fueReabiertaAlgunaVez) },
+                    // De las vacantes CUBIERTAS del periodo: cuántas fueron por reapertura y cuántas no.
+                    { clave: 'cubiertaPorReapertura', canvasId: 'chartCubiertasReapertura', campo: 'cubiertaPorReapertura', n: 9999, tipo: 'dona',
+                      vacio: 'No hay vacantes cubiertas para los filtros actuales.',
+                      filtrarLista: lista => lista.filter(v => v.estatusVacante === 'CUBIERTA') }
                 ];
                 graficas.forEach(cfg => dibujarGraficaCategorica(cfg, basePeriodo));
 
