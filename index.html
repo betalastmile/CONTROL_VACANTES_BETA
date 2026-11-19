@@ -8,7 +8,7 @@
         <meta http-equiv="Expires" content="0">
         <script>
             /* >>> CAMBIA ESTE VALOR EN CADA ACTUALIZACIÓN que subas (ej. BETA.V1.3). <<< */
-            const APP_VERSION = 'BETA.V.1.1';
+            const APP_VERSION = 'BETA.V.1.2';
         </script>
         <title>Reporte de Vacantes</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -410,10 +410,10 @@
             }
 
             // Estatus desde los cuales SÍ se permite cancelar una vacante.
-            // Solo se puede cancelar cuando está VIGENTE. Una vez CANCELADA, no
+            // Se puede cancelar cuando está VIGENTE o VIGENTE-REAPERTURADO. Una vez CANCELADA, no
             // puede volver a cancelarse ni reabrirse (CANCELADA no está en
             // ESTATUS_REAPERTURABLES).
-            const ESTATUS_CANCELABLES = ['VIGENTE'];
+            const ESTATUS_CANCELABLES = ['VIGENTE', 'VIGENTE-REAPERTURADO'];
 
             // Pide al backend (Code.gs) que cancele la vacante: busca el folio en
             // la hoja REGISTRO VACANTES, valida el estatus actual otra vez del
@@ -2437,7 +2437,7 @@
                 const estatusActual = (encontrada.estatusVacante || '').trim().toUpperCase();
                 if (!ESTATUS_CANCELABLES.includes(estatusActual)) {
                     state.cancelacionVacante = null;
-                    state.cancelacionError = `La vacante ${encontrada.id} no se puede cancelar. Su estatus actual es "${encontrada.estatusVacante}". Solo se pueden cancelar vacantes en estatus VIGENTE.`;
+                    state.cancelacionError = `La vacante ${encontrada.id} no se puede cancelar. Su estatus actual es "${encontrada.estatusVacante}". Solo se pueden cancelar vacantes en estatus VIGENTE o VIGENTE-REAPERTURADO.`;
                     render();
                     return;
                 }
